@@ -9,8 +9,32 @@ import threading
 import json
 import numpy as np
 import math
+import uuid
+import time
 
 from pygame import rect
+
+# Firebase Configuration
+FIREBASE_CONFIG = {
+    "apiKey": "AIzaSyCs0xM154UTEUxhOCv-FqqL1i6zHlZHfug",
+    "authDomain": "nsce-fr1.firebaseapp.com",
+    "databaseURL": "https://nsce-fr1-default-rtdb.europe-west1.firebasedatabase.app",
+    "projectId": "nsce-fr1",
+    "storageBucket": "nsce-fr1.firebasestorage.app",
+    "messagingSenderId": "344286384535",
+    "appId": "1:344286384535:web:2340d545eda9bc21f474d2",
+    "measurementId": "G-H7CH1CVCE4"
+}
+
+# Firebase Realtime Database URL
+FIREBASE_DB_URL = FIREBASE_CONFIG["databaseURL"]
+
+# Performance optimization - Sync status caching
+sync_status_cache = {
+    "status": "unknown",
+    "last_check": 0,
+    "check_interval": 5.0  # Check every 5 seconds instead of every frame
+}
 
 
 # Funktion für Ressourcenpfade (wichtig für PyInstaller)
@@ -36,10 +60,278 @@ def resource_path(relative_path):
     return path
 
 
-# Verbesserte Filter-Funktionen mit präziser Pixel-Manipulation
+# Firebase Settings Functions
+def load_settings_from_firebase():
+    """Load settings from Firebase Realtime Database (primary storage)"""
+    global HighScore, current_theme, current_difficulty_preset, fullscreen, user_id
+
+    try:
+        # Try to load existing user_id from fallback location
+        local_user_id = load_local_user_id()
+
+        if local_user_id:
+            user_id = local_user_id
+            # Try to load settings for this user from Firebase
+            url = f"{FIREBASE_DB_URL}/users/{user_id}/settings.json"
+            response = requests.get(url, timeout=5)
+
+            if response.status_code == 200 and response.json():
+                settings = response.json()
+                HighScore = settings.get('high_score', 0)
+                current_theme = settings.get('theme', 'Classic')
+                current_difficulty_preset = settings.get('difficulty', 'Normal')
+                fullscreen = settings.get('fullscreen', False)
+                print(f"Settings loaded from Firebase for user: {user_id}")
+                return True
+
+        # If no existing user or settings, create new user
+        user_id = str(uuid.uuid4())
+        save_local_user_id(user_id)  # Save user_id to C:/NSCE/ as fallback
+        save_settings_to_firebase()  # Create initial settings in Firebase
+        print(f"New user created: {user_id}")
+        return True
+
+    except Exception as e:
+        print(f"Error loading from Firebase: {e}")
+        # Use default values if Firebase fails
+        if not user_id:
+            user_id = str(uuid.uuid4())
+            save_local_user_id(user_id)
+        return False
+
+
+def save_settings_to_firebase():
+    """Save settings to Firebase Realtime Database (primary storage)"""
+    if not user_id:
+        print("No user_id available for saving settings")
+        return False
+
+    settings = {
+        'user_id': user_id,
+        'high_score': HighScore,
+        'theme': current_theme,
+        'difficulty': current_difficulty_preset,
+        'fullscreen': fullscreen,
+        'last_updated': int(time.time())
+    }
+
+    try:
+        url = f"{FIREBASE_DB_URL}/users/{user_id}/settings.json"
+        response = requests.put(url, json=settings, timeout=5)
+
+        if response.status_code == 200:
+            print("Settings saved to Firebase successfully")
+            return True
+        else:
+            print(f"Failed to save to Firebase: {response.status_code}")
+            return False
+
+    except Exception as e:
+        print(f"Error saving to Firebase: {e}")
+        return False
+
+
+def load_local_user_id():
+    """Load user_id from C:/NSCE/user_id.txt (fallback only)"""
+    try:
+        nsce_path = "C:/NSCE"
+        user_id_file = os.path.join(nsce_path, "user_id.txt")
+
+        if os.path.exists(user_id_file):
+            with open(user_id_file, 'r') as f:
+                user_id = f.read().strip()
+                if user_id:  # Make sure it's not empty
+                    return user_id
+
+    except Exception as e:
+        print(f"Error loading user_id from C:/NSCE/: {e}")
+    return None
+
+
+def save_local_user_id(uid):
+    """Save user_id to C:/NSCE/user_id.txt (fallback only)"""
+    try:
+        nsce_path = "C:/NSCE"
+        user_id_file = os.path.join(nsce_path, "user_id.txt")
+
+        # Create directory if it doesn't exist
+        os.makedirs(nsce_path, exist_ok=True)
+
+        with open(user_id_file, 'w') as f:
+            f.write(uid)
+
+        print(f"User ID saved to {user_id_file}")
+
+    except Exception as e:
+        print(f"Error saving user_id to C:/NSCE/: {e}")
+
+
+
+def sync_high_score_to_firebase():
+    """Special function to sync high score immediately when achieved"""
+    if not user_id:
+        return
+
+    try:
+        url = f"{FIREBASE_DB_URL}/users/{user_id}/settings/high_score.json"
+        response = requests.put(url, json=HighScore, timeout=3)
+
+        if response.status_code == 200:
+            print(f"High score {HighScore} synced to Firebase")
+        else:
+            print(f"Failed to sync high score: {response.status_code}")
+
+    except Exception as e:
+        print(f"Error syncing high score: {e}")
+
+
+def save_settings_async():
+    """Save settings asynchronously to avoid blocking the game"""
+
+    def _save():
+        save_settings_to_firebase()
+
+    thread = threading.Thread(target=_save)
+    thread.daemon = True
+    thread.start()
+
+
+def update_high_score(new_score):
+    """Update high score and sync to Firebase immediately"""
+    global HighScore
+
+    if new_score > HighScore:
+        HighScore = new_score
+
+        # Sync to Firebase in background thread to avoid blocking
+        def _sync():
+            sync_high_score_to_firebase()
+
+        thread = threading.Thread(target=_sync)
+        thread.daemon = True
+        thread.start()
+
+        print(f"New high score: {HighScore}")
+
+
+def update_high_score(new_score):
+    """Update high score and sync to Firebase immediately"""
+    global HighScore
+
+    if new_score > HighScore:
+        HighScore = new_score
+
+        # Sync to Firebase in background thread to avoid blocking
+        def _sync():
+            sync_high_score_to_firebase()
+
+        thread = threading.Thread(target=_sync)
+        thread.daemon = True
+        thread.start()
+
+        print(f"New high score: {HighScore}")
+
+
+def change_theme(new_theme):
+    """Change theme and save to Firebase"""
+    global current_theme
+    current_theme = new_theme
+    save_settings_async()
+
+def change_difficulty(new_difficulty):
+    """Change difficulty and save to Firebase"""
+    global current_difficulty_preset
+    current_difficulty_preset = new_difficulty
+    save_settings_async()
+
+
+def load_settings():
+    """Main settings loading function (Firebase primary, no local fallback)"""
+    success = load_settings_from_firebase()
+    if not success:
+        print("Using default settings - Firebase unavailable")
+
+def save_settings():
+    """Main settings saving function (Firebase only)"""
+    save_settings_to_firebase()
+
+
+def check_sync_status_async():
+    """Check sync status in background thread"""
+    global sync_status_cache
+
+    def _check():
+        try:
+            if not user_id:
+                sync_status_cache["status"] = "no_user"
+                return
+
+            url = f"{FIREBASE_DB_URL}/users/{user_id}/settings/high_score.json"
+            response = requests.get(url, timeout=2)
+            if response.status_code == 200:
+                sync_status_cache["status"] = "connected"
+            else:
+                sync_status_cache["status"] = "error"
+        except:
+            sync_status_cache["status"] = "offline"
+
+        sync_status_cache["last_check"] = time.time()
+
+    thread = threading.Thread(target=_check)
+    thread.daemon = True
+    thread.start()
+
+
+def draw_sync_status():
+    """Draw sync status indicator (OPTIMIZED - no network requests in main loop)"""
+    current_time = time.time()
+
+    # Only check status every few seconds, not every frame!
+    if current_time - sync_status_cache["last_check"] > sync_status_cache["check_interval"]:
+        check_sync_status_async()
+
+    # Use cached status
+    status = sync_status_cache["status"]
+
+    if status == "connected":
+        status_color = (0, 255, 0)  # Green
+        status_text = "⬆"
+    elif status == "error":
+        status_color = (255, 165, 0)  # Orange
+        status_text = "⚠"
+    else:  # offline, no_user, unknown
+        status_color = (255, 0, 0)  # Red
+        status_text = "⬇"
+
+    # Draw status indicator in corner
+    status_surface = font_tiny.render(status_text, True, status_color)
+    screen.blit(status_surface, (window_w - 30, 10))
+
+
+# Optimized filter functions with caching
+filter_cache = {}
+
+
+def get_cached_filtered_image(base_image, filter_func, cache_key):
+    """Get filtered image from cache or create and cache it"""
+    if cache_key not in filter_cache:
+        if filter_func:
+            filter_cache[cache_key] = filter_func(base_image)
+        else:
+            filter_cache[cache_key] = base_image.copy()
+    return filter_cache[cache_key]
+
+
+def clear_filter_cache():
+    """Clear filter cache to free memory"""
+    global filter_cache
+    filter_cache.clear()
+
+
+# Erweiterte Filter-Funktionen mit präziser Pixel-Manipulation
 def apply_hsl_filter(surface, hue_shift=0, saturation_mult=1.0, lightness_mult=1.0):
     """Erweiterte HSL-Filter-Funktion für präzise Farbmanipulation"""
-    # Konvertiere Surface zu Pixel-Array
+    # Konvertierte Surface zu Pixel-Array
     arr = pygame.surfarray.array3d(surface).astype(float)
     h, w, c = arr.shape
 
@@ -288,6 +580,8 @@ has_moved = False
 HighScore = 0
 window_focused = True
 upload_status = ""
+fullscreen = False
+user_id = None
 
 # Fester Spielbereich (400x600) - NUR für Gameplay
 GAME_WIDTH, GAME_HEIGHT = 400, 600
@@ -400,33 +694,17 @@ base_images = {
     "pipe_down": "images/pipe_down.png"
 }
 
-
-# Einstellungen laden
-def load_settings():
-    global current_theme, current_difficulty_preset, fullscreen, HighScore
-    try:
-        with open(resource_path("settings.json"), "r") as f:
-            settings = json.load(f)
-            current_theme = settings.get("theme", "Classic")
-            current_difficulty_preset = settings.get("difficulty", "Normal")
-            fullscreen = settings.get("fullscreen", False)
-            HighScore = settings.get("highscore", 0)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
-
-
-def save_settings():
-    settings = {
-        "theme": current_theme,
-        "difficulty": current_difficulty_preset,
-        "fullscreen": fullscreen,
-        "highscore": HighScore
-    }
-    with open(resource_path("settings.json"), "w") as f:
-        json.dump(settings, f)
-
-
+# Initialize Firebase settings
 load_settings()
+
+# Check network connectivity on startup (not in main loop!)
+try:
+    requests.get("https://www.google.com", timeout=3)
+    print("Network available - Firebase sync enabled")
+    sync_status_cache["status"] = "connected"
+except:
+    print("No network - using local storage only")
+    sync_status_cache["status"] = "offline"
 
 # Window Setup - KORRIGIERT auf 800x600
 if fullscreen:
@@ -474,10 +752,10 @@ select_sfx = pygame.mixer.Sound(resource_path("sounds/select.wav"))
 # Basis-Bilder laden
 base_loaded_images = {}
 for key, path in base_images.items():
-    base_loaded_images[key] = pygame.image.load(resource_path(path))
+    base_loaded_images[key] = pygame.image.load(resource_path(path)).convert_alpha()
 
 
-# Theme-basierte Bilder UND Masken laden mit Filtern
+# Theme-basierte Bilder UND Masken laden mit Filtern (OPTIMIZED with caching)
 def load_theme_images(theme_name):
     theme = themes[theme_name]
     filter_func = theme["filter"]
@@ -486,24 +764,23 @@ def load_theme_images(theme_name):
     masks = {}
 
     for key, base_image in base_loaded_images.items():
-        if filter_func:
-            filtered_image = filter_func(base_image)
-            images[f"{key}_img"] = filtered_image
-            masks[f"{key}_mask"] = pygame.mask.from_surface(filtered_image)
-        else:
-            images[f"{key}_img"] = base_image.copy()
-            masks[f"{key}_mask"] = pygame.mask.from_surface(base_image)
+        cache_key = f"{theme_name}_{key}"
+
+        # Use cached version if available
+        filtered_image = get_cached_filtered_image(base_image, filter_func, cache_key)
+        images[key] = filtered_image
+        masks[f"{key}_mask"] = pygame.mask.from_surface(filtered_image)
 
     return images, masks
 
 
 # Initiale Bilder und Masken laden
 theme_images, theme_masks = load_theme_images(current_theme)
-player_img = theme_images["player_img"]
-pipe_up_img = theme_images["pipe_up_img"]
-pipe_down_img = theme_images["pipe_down_img"]
-ground_img = theme_images["ground_img"]
-bg_img = theme_images["background_img"]
+player_img = theme_images["player"]
+pipe_up_img = theme_images["pipe_up"]
+pipe_down_img = theme_images["pipe_down"]
+ground_img = theme_images["ground"]
+bg_img = theme_images["background"]
 
 # Masken für die Rohre (jetzt theme-spezifisch)
 pipe_up_mask = theme_masks["pipe_up_mask"]
@@ -880,6 +1157,8 @@ def show_admin_editor():
                     "min_spacing": int(min_spacing_var.get())
                 }
 
+            # Save to Firebase
+            save_settings_async()
             messagebox.showinfo("Success", "Values updated successfully!")
             root.destroy()
         except ValueError:
@@ -953,7 +1232,10 @@ def upload_highscore(name):
         url = "https://flappy-bird.nsce.fr/api/upload_score"
         data = {
             "name": name,
-            "score": HighScore
+            "score": HighScore,
+            "user_id": user_id,  # Firebase user_id
+            "theme": current_theme,
+            "difficulty": current_difficulty_preset
         }
         response = requests.post(url, json=data, timeout=10)
 
@@ -1096,7 +1378,7 @@ def toggle_fullscreen():
         game_area.x = (window_w - GAME_WIDTH) // 2
         game_area.y = (window_h - GAME_HEIGHT) // 2
 
-    save_settings()
+    save_settings_async()
 
 
 def game():
@@ -1229,8 +1511,7 @@ def game():
                     for btn_rect, value in diff_buttons:
                         if btn_rect.collidepoint(mouse_pos):
                             pygame.mixer.Sound.play(select_sfx)
-                            current_difficulty_preset = value
-                            save_settings()
+                            change_difficulty(value)
 
                     # Fullscreen button
                     if fs_button.collidepoint(mouse_pos):
@@ -1241,19 +1522,20 @@ def game():
                     for btn_rect, theme_name in theme_buttons_list:
                         if btn_rect.collidepoint(mouse_pos):
                             pygame.mixer.Sound.play(select_sfx)
-                            current_theme = theme_name
+                            change_theme(theme_name)
+                            # Clear cache when theme changes to prevent memory issues
+                            clear_filter_cache()
                             # Theme-Bilder UND Masken mit Filter neu laden
                             theme_images, theme_masks = load_theme_images(current_theme)
-                            player_img = theme_images["player_img"]
-                            pipe_up_img = theme_images["pipe_up_img"]
-                            pipe_down_img = theme_images["pipe_down_img"]
-                            ground_img = theme_images["ground_img"]
-                            bg_img = theme_images["background_img"]
+                            player_img = theme_images["player"]
+                            pipe_up_img = theme_images["pipe_up"]
+                            pipe_down_img = theme_images["pipe_down"]
+                            ground_img = theme_images["ground"]
+                            bg_img = theme_images["background"]
                             pipe_up_mask = theme_masks["pipe_up_mask"]
                             pipe_down_mask = theme_masks["pipe_down_mask"]
                             player.rotated_image = player_img
                             player.mask = pygame.mask.from_surface(player_img)
-                            save_settings()
 
                 elif game_state == 7 and theme_buttons:  # Theme-Auswahl
                     back_button, theme_buttons_dict = theme_buttons
@@ -1265,19 +1547,20 @@ def game():
                         for theme_name, button_rect in theme_buttons_dict.items():
                             if button_rect.collidepoint(mouse_pos):
                                 pygame.mixer.Sound.play(select_sfx)
-                                current_theme = theme_name
+                                change_theme(theme_name)
+                                # Clear cache when theme changes to prevent memory issues
+                                clear_filter_cache()
                                 # Theme-Bilder UND Masken mit Filter neu laden
                                 theme_images, theme_masks = load_theme_images(current_theme)
-                                player_img = theme_images["player_img"]
-                                pipe_up_img = theme_images["pipe_up_img"]
-                                pipe_down_img = theme_images["pipe_down_img"]
-                                ground_img = theme_images["ground_img"]
-                                bg_img = theme_images["background_img"]
+                                player_img = theme_images["player"]
+                                pipe_up_img = theme_images["pipe_up"]
+                                pipe_down_img = theme_images["pipe_down"]
+                                ground_img = theme_images["ground"]
+                                bg_img = theme_images["background"]
                                 pipe_up_mask = theme_masks["pipe_up_mask"]
                                 pipe_down_mask = theme_masks["pipe_down_mask"]
                                 player.rotated_image = player_img
                                 player.mask = pygame.mask.from_surface(player_img)
-                                save_settings()
                                 break
 
         # Spiel-Logik
@@ -1286,8 +1569,7 @@ def game():
 
             if check_collision(player, pipes):
                 if score > HighScore:
-                    HighScore = score
-                    save_settings()
+                    update_high_score(score)  # Firebase sync
                 pygame.mixer.Sound.play(slap_sfx)
                 game_state = 3
 
@@ -1340,6 +1622,9 @@ def game():
             screen.set_clip(None)
             scoreboard()
 
+        # Sync status indicator (OPTIMIZED - no network requests in main loop!)
+        draw_sync_status()
+
         # Menü-Overlays (nutzen VOLLBILD)
         if game_state == 1:
             main_menu_buttons = draw_main_menu()
@@ -1373,4 +1658,5 @@ def game():
         clock.tick(fps)
 
 
-game()
+if __name__ == "__main__":
+    game()
