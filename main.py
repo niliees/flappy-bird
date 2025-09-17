@@ -42,7 +42,7 @@ sync_status_cache = {
 }
 
 
-# Funktion fÃ¼r Ressourcenpfade (wichtig fÃ¼r PyInstaller)
+# Funktion für Ressourcenpfade (wichtig für PyInstaller)
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller"""
     try:
@@ -59,7 +59,7 @@ def resource_path(relative_path):
         if os.path.exists(current_dir_path):
             return current_dir_path
 
-        # Wenn die Datei nirgends gefunden wurde, gib eine aussagekrÃ¤ftige Fehlermeldung aus
+        # Wenn die Datei nirgends gefunden wurde, gib eine aussagekräftige Fehlermeldung aus
         raise FileNotFoundError(f"Datei '{relative_path}' konnte nicht gefunden werden.")
 
     return path
@@ -218,7 +218,7 @@ def update_high_score(new_score):
         print(f"New high score: {HighScore}")
 
 
-# NEU: VERIFIKATIONS-FUNKTIONEN
+# NEU: VEREINFACHTE VERIFIKATIONS-FUNKTIONEN
 
 def check_uid_verification_status(uid):
     """Check if UID is already verified via verify.nsce.fr API"""
@@ -264,167 +264,255 @@ def start_verification_process(uid=None):
         return False, None, f"Connection error: {str(e)}"
 
 
-def wait_for_verification_completion(verification_id, max_wait_time=300):
-    """Wait for verification to complete by polling the API"""
-    start_time = time.time()
-
-    while time.time() - start_time < max_wait_time:
-        try:
-            response = requests.get(f"{VERIFY_API_URL}/get-code/{verification_id}", timeout=5)
-
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('ready'):
-                    # Verification complete!
-                    return True, data.get('uid'), data.get('code')
-            elif response.status_code == 404:
-                return False, None, "Verification session not found"
-
-        except Exception as e:
-            print(f"Error polling verification: {e}")
-
-        # Wait 5 seconds before next check
-        time.sleep(5)
-
-    return False, None, "Verification timeout"
-
-
-def show_verification_dialog():
-    """Show dialog explaining verification process"""
+def show_code_input_dialog():
+    """SIMPLIFIED: Direct 6-digit code input without explanations"""
     root = tk.Tk()
-    root.title("Email Verification Required")
-    root.geometry("600x400")
+    root.title("Enter 6-digit Code")
+    root.geometry("350x200")
     root.resizable(False, False)
     root.attributes("-topmost", True)
 
-    # Center the dialog
+    # Center dialog
     root.update_idletasks()
     x = (root.winfo_screenwidth() // 2) - (root.winfo_width() // 2)
     y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
-    root.geometry('+{}+{}'.format(x, y))
+    root.geometry(f'+{x}+{y}')
 
-    result = {"continue": False}
+    result = {"code": None, "cancelled": False}
 
-    def on_continue():
-        result["continue"] = True
-        root.destroy()
+    def on_submit():
+        code = code_entry.get().strip()
+        if len(code) == 6 and code.isdigit():
+            result["code"] = code
+            root.destroy()
+        else:
+            error_label.config(text="Must be exactly 6 digits!", fg="red")
 
     def on_cancel():
-        result["continue"] = False
-        root.destroy()
-
-    # Main text
-    tk.Label(root, text="Email Verification Required", font=("Arial", 16, "bold")).pack(pady=20)
-
-    message = """To upload your highscore, you need to verify your email address first.
-
-This is a one-time process to prevent spam and fake scores.
-
-Steps:
-1. Click 'Continue' below
-2. The verification URL will be shown
-3. Click 'Open Browser' or copy the URL manually
-4. Enter your email address on the webpage
-5. Check your email for a 4-digit code
-6. Enter the code on the webpage
-7. Come back to this game
-
-The verification will be saved permanently."""
-
-    tk.Label(root, text=message, font=("Arial", 10), justify="left", wraplength=550).pack(pady=10, padx=20)
-
-    # Buttons
-    button_frame = tk.Frame(root)
-    button_frame.pack(pady=20)
-
-    tk.Button(button_frame, text="Continue with Verification", command=on_continue,
-              bg="#4CAF50", fg="white", font=("Arial", 10, "bold"), width=20).pack(side="left", padx=10)
-    tk.Button(button_frame, text="Cancel", command=on_cancel,
-              bg="#f44336", fg="white", font=("Arial", 10), width=10).pack(side="left")
-
-    root.mainloop()
-    return result["continue"]
-
-
-def show_verification_url_dialog(verify_url):
-    """Show dialog with verification URL and manual browser button"""
-    root = tk.Tk()
-    root.title("Open Verification Page")
-    root.geometry("600x300")
-    root.resizable(False, False)
-    root.attributes("-topmost", True)
-
-    # Center the dialog
-    root.update_idletasks()
-    x = (root.winfo_screenwidth() // 2) - (root.winfo_width() // 2)
-    y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
-    root.geometry('+{}+{}'.format(x, y))
-
-    result = {"opened": False}
-
-    def open_browser():
-        try:
-            webbrowser.open(verify_url)
-            result["opened"] = True
-            status_label.config(text="✓ Browser opened! Check your browser window.", fg="green")
-        except Exception as e:
-            status_label.config(text=f"Error opening browser: {e}", fg="red")
-
-    def copy_url():
-        try:
-            root.clipboard_clear()
-            root.clipboard_append(verify_url)
-            root.update()
-            copy_status.config(text="✓ URL copied to clipboard!", fg="green")
-        except Exception as e:
-            copy_status.config(text=f"Error copying: {e}", fg="red")
-
-    def close_dialog():
+        result["cancelled"] = True
         root.destroy()
 
     # Title
-    tk.Label(root, text="Verification Page Ready", font=("Arial", 16, "bold")).pack(pady=15)
+    tk.Label(root, text="Enter 6-digit Code", font=("Arial", 16, "bold")).pack(pady=15)
 
-    # URL display
-    tk.Label(root, text="Verification URL:", font=("Arial", 10, "bold")).pack()
-    url_frame = tk.Frame(root)
-    url_frame.pack(pady=10, padx=20, fill="x")
+    # Simple instruction
+    tk.Label(root, text="Enter the code from the verification website:",
+             font=("Arial", 10)).pack(pady=5)
 
-    url_entry = tk.Entry(url_frame, font=("Courier", 9), width=70, justify="center")
-    url_entry.pack(fill="x")
-    url_entry.insert(0, verify_url)
-    url_entry.config(state="readonly")
+    # Code input
+    code_entry = tk.Entry(root, font=("Arial", 16), width=8, justify="center")
+    code_entry.pack(pady=15)
+    code_entry.focus()
+
+    # Error label
+    error_label = tk.Label(root, text="", font=("Arial", 9))
+    error_label.pack()
 
     # Buttons
     button_frame = tk.Frame(root)
-    button_frame.pack(pady=20)
+    button_frame.pack(pady=15)
 
-    open_btn = tk.Button(button_frame, text="🌐 Open Browser", command=open_browser,
-                         bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), width=15)
-    open_btn.pack(side="left", padx=10)
+    tk.Button(button_frame, text="Submit", command=on_submit,
+              bg="#4CAF50", fg="white", font=("Arial", 10, "bold"),
+              width=10).pack(side="left", padx=5)
+    tk.Button(button_frame, text="Cancel", command=on_cancel,
+              bg="#f44336", fg="white", font=("Arial", 10),
+              width=10).pack(side="left", padx=5)
 
-    copy_btn = tk.Button(button_frame, text="📋 Copy URL", command=copy_url,
-                         bg="#2196F3", fg="white", font=("Arial", 12, "bold"), width=15)
-    copy_btn.pack(side="left", padx=10)
-
-    close_btn = tk.Button(button_frame, text="✓ Done", command=close_dialog,
-                          bg="#FF9800", fg="white", font=("Arial", 12, "bold"), width=15)
-    close_btn.pack(side="left", padx=10)
-
-    # Status labels
-    status_label = tk.Label(root, text="Click 'Open Browser' to open the verification page",
-                            font=("Arial", 10), fg="blue")
-    status_label.pack(pady=5)
-
-    copy_status = tk.Label(root, text="", font=("Arial", 9))
-    copy_status.pack()
-
-    instruction = tk.Label(root, text="Complete verification in browser, then come back here and click 'Done'",
-                           font=("Arial", 9), fg="gray")
-    instruction.pack(pady=10)
+    # Enter key binding
+    root.bind('<Return>', lambda e: on_submit())
+    root.bind('<Escape>', lambda e: on_cancel())
 
     root.mainloop()
-    return result["opened"]
+
+    if result["cancelled"]:
+        return None
+    return result["code"]
+
+
+def verify_6_digit_code(verification_id, code):
+    """Verify the 6-digit code with the backend"""
+    try:
+        # Check if the verification is ready and get the code
+        response = requests.get(f"{VERIFY_API_URL}/get-code/{verification_id}", timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('ready'):
+                # Compare the codes
+                if data.get('code') == code:
+                    return True, data.get('uid'), "Code correct"
+                else:
+                    return False, None, "Wrong code"
+            else:
+                return False, None, "Email verification not completed yet"
+        elif response.status_code == 404:
+            return False, None, "Verification session not found"
+        else:
+            return False, None, f"API Error: {response.status_code}"
+
+    except Exception as e:
+        return False, None, f"Connection error: {str(e)}"
+
+
+def wait_for_verification_completion(verification_id):
+    """Simplified - just shows code input"""
+    try:
+        print("Showing code input dialog...")
+        code = show_code_input_dialog()
+
+        if not code:
+            return False, "User cancelled", None
+
+        print(f"User entered code: {code}")
+
+        # Verify the code with backend
+        success, uid, message = verify_6_digit_code(verification_id, code)
+
+        if success:
+            print(f"Code verification successful! UID: {uid}")
+            save_local_user_id(uid)
+            return True, uid, message
+        else:
+            print(f"Code verification failed: {message}")
+            return False, message, None
+
+    except Exception as e:
+        print(f"Exception in wait_for_verification_completion: {e}")
+        return False, f"Error: {str(e)}", None
+
+
+def upload_highscore(name):
+    """Simplified upload function - goes directly to code input"""
+    global upload_status, user_id
+
+    try:
+        upload_status = "Checking verification status..."
+        print(f"Starting verification check for user: {name}")
+
+        # 1. Check if user has local UID file
+        local_uid = load_local_user_id()
+        print(f"Local UID found: {local_uid}")
+
+        if local_uid:
+            # 2. Check if this UID is verified
+            upload_status = "Checking if already verified..."
+            is_verified = check_uid_verification_status(local_uid)
+            print(f"UID verification status: {is_verified}")
+
+            if is_verified:
+                # Already verified - proceed directly to upload
+                upload_status = "Already verified! Uploading score..."
+                user_id = local_uid
+                upload_highscore_direct(name)
+                return
+
+        # 3. Not verified - start verification process directly
+        upload_status = "Starting verification process..."
+        print("Starting verification process...")
+        already_verified, verify_data, error = start_verification_process(local_uid)
+
+        if error:
+            upload_status = f"Verification error: {error}"
+            print(f"Verification error: {error}")
+            return
+
+        if already_verified:
+            upload_status = "Already verified! Uploading score..."
+            print("Became verified during process")
+            upload_highscore_direct(name)
+            return
+
+        # 4. Get verification data
+        verify_url = verify_data['verifyUrl']
+        verification_id = verify_data['verificationId']
+        target_uid = verify_data['uid']
+
+        print(f"Verification URL: {verify_url}")
+        print(f"Verification ID: {verification_id}")
+
+        # 5. Show URL and try to open browser automatically
+        upload_status = f"Opening browser: {verify_url}"
+
+        # Try to open browser automatically
+        try:
+            webbrowser.open(verify_url)
+            print("Browser opened automatically")
+            upload_status = "Browser opened - complete verification then enter code"
+        except Exception as e:
+            print(f"Could not open browser: {e}")
+            upload_status = f"Go to: {verify_url} then enter code"
+
+        # 6. Direct code input (up to 3 attempts)
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            print(f"Code input attempt {attempt + 1}/{max_attempts}")
+
+            upload_status = f"Enter 6-digit code (Attempt {attempt + 1}/{max_attempts})"
+            success, verified_uid, message = wait_for_verification_completion(verification_id)
+
+            if success:
+                upload_status = "Email verified! Uploading highscore..."
+                user_id = verified_uid
+                print(f"Verification successful! UID: {verified_uid}")
+                upload_highscore_direct(name)
+                return
+            else:
+                upload_status = f"Wrong code: {message}"
+                print(f"Verification attempt {attempt + 1} failed: {message}")
+
+                if attempt < max_attempts - 1:
+                    upload_status = f"Wrong code. Try again ({attempt + 2}/{max_attempts})"
+                else:
+                    upload_status = f"Verification failed after {max_attempts} attempts"
+                    return
+
+    except Exception as e:
+        upload_status = f"Verification error: {str(e)}"
+        print(f"Exception in upload_highscore: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def show_upload_dialog():
+    """Simplified upload dialog"""
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    name = simpledialog.askstring("Upload Highscore", "Enter your name:", parent=root)
+    root.destroy()
+
+    if name and name.strip():
+        upload_thread = threading.Thread(target=upload_highscore, args=(name.strip(),))
+        upload_thread.daemon = True
+        upload_thread.start()
+        return True
+    return False
+
+
+def upload_highscore_direct(name):
+    """Direct upload function (original logic)"""
+    global upload_status, user_id
+
+    try:
+        url = "https://flappy-bird.nsce.fr/api/upload_score"
+        data = {
+            "name": name,
+            "score": HighScore,
+            "user_id": user_id,  # Now verified UID
+            "theme": current_theme,
+            "difficulty": current_difficulty_preset
+        }
+        response = requests.post(url, json=data, timeout=10)
+
+        if response.status_code == 200:
+            result = response.json()
+            upload_status = result.get("message", "Score uploaded successfully!")
+        else:
+            upload_status = f"Upload failed: {response.status_code}"
+    except Exception as e:
+        upload_status = f"Upload error: {str(e)}"
 
 
 # ENDE VERIFIKATIONS-FUNKTIONEN
@@ -495,13 +583,13 @@ def draw_sync_status():
 
     if status == "connected":
         status_color = (0, 255, 0)  # Green
-        status_text = "â¬†"
+        status_text = "⬢ "
     elif status == "error":
         status_color = (255, 165, 0)  # Orange
-        status_text = "âš "
+        status_text = "⚠ "
     else:  # offline, no_user, unknown
         status_color = (255, 0, 0)  # Red
-        status_text = "â¬‡"
+        status_text = "⬢"
 
     # Draw status indicator in corner
     status_surface = font_tiny.render(status_text, True, status_color)
@@ -528,9 +616,9 @@ def clear_filter_cache():
     filter_cache.clear()
 
 
-# Erweiterte Filter-Funktionen mit prÃ¤ziser Pixel-Manipulation
+# Erweiterte Filter-Funktionen mit präziser Pixel-Manipulation
 def apply_hsl_filter(surface, hue_shift=0, saturation_mult=1.0, lightness_mult=1.0):
-    """Erweiterte HSL-Filter-Funktion fÃ¼r prÃ¤zise Farbmanipulation"""
+    """Erweiterte HSL-Filter-Funktion für präzise Farbmanipulation"""
     # Konvertierte Surface zu Pixel-Array
     arr = pygame.surfarray.array3d(surface).astype(float)
     h, w, c = arr.shape
@@ -563,7 +651,7 @@ def apply_hsl_filter(surface, hue_shift=0, saturation_mult=1.0, lightness_mult=1
     s = np.clip(s * saturation_mult, 0, 1)
     l = np.clip(l * lightness_mult, 0, 1)
 
-    # HSL zurÃ¼ck zu RGB
+    # HSL zurück zu RGB
     c_val = (1 - np.abs(2 * l - 1)) * s
     x = c_val * (1 - np.abs((h_val / 60) % 2 - 1))
     m = l - c_val / 2
@@ -588,7 +676,7 @@ def apply_hsl_filter(surface, hue_shift=0, saturation_mult=1.0, lightness_mult=1
     g_new = (g_new + m) * 255
     b_new = (b_new + m) * 255
 
-    # ZurÃ¼ck zur Surface
+    # Zurück zur Surface
     new_arr = np.stack([r_new, g_new, b_new], axis=2).astype(np.uint8)
     new_surface = pygame.surfarray.make_surface(new_arr)
 
@@ -615,10 +703,10 @@ def apply_advanced_filter(surface, contrast=1.0, brightness=0, saturation=1.0, h
         arr = arr * contrast + brightness
         arr = np.clip(arr, 0, 255)
 
-        # Zu Surface zurÃ¼ck konvertieren
+        # Zu Surface zurück konvertieren
         new_surface = pygame.surfarray.make_surface(arr.astype(np.uint8))
 
-        # HSL-Filter anwenden wenn nÃ¶tig
+        # HSL-Filter anwenden wenn nötig
         if saturation != 1.0 or hue_shift != 0:
             new_surface = apply_hsl_filter(new_surface, hue_shift, saturation, 1.0)
 
@@ -629,18 +717,18 @@ def apply_advanced_filter(surface, contrast=1.0, brightness=0, saturation=1.0, h
                 alpha_arr = pygame.surfarray.array_alpha(surface)
                 pygame.surfarray.pixels_alpha(new_surface)[:] = alpha_arr
             except:
-                # Fallback wenn Alpha-Handling fehlschlÃ¤gt
+                # Fallback wenn Alpha-Handling fehlschlägt
                 new_surface.set_alpha(surface.get_alpha())
 
         return new_surface
     except Exception:
-        # Fallback zu einfacher Kopie wenn Filter fehlschlÃ¤gt
+        # Fallback zu einfacher Kopie wenn Filter fehlschlägt
         return surface.copy()
 
 
 # Spezifische Theme-Filter
 def apply_night_filter(surface):
-    """Nacht-Filter: dunkler, blÃ¤ulich, hoher Kontrast"""
+    """Nacht-Filter: dunkler, bläulich, hoher Kontrast"""
     return apply_advanced_filter(
         surface,
         contrast=1.3,
@@ -652,7 +740,7 @@ def apply_night_filter(surface):
 
 
 def apply_desert_filter(surface):
-    """WÃ¼sten-Filter: wÃ¤rmer, orange/gelb, heller"""
+    """Wüsten-Filter: wärmer, orange/gelb, heller"""
     return apply_advanced_filter(
         surface,
         contrast=1.1,
@@ -664,19 +752,19 @@ def apply_desert_filter(surface):
 
 
 def apply_retro_filter(surface):
-    """Retro-Filter: grÃ¼nlich, niedriger Kontrast, dunkel"""
+    """Retro-Filter: grünlich, niedriger Kontrast, dunkel"""
     return apply_advanced_filter(
         surface,
         contrast=0.8,
         brightness=-10,
         saturation=0.6,
-        hue_shift=120,  # Richtung GrÃ¼n
+        hue_shift=120,  # Richtung Grün
         gamma=0.9
     )
 
 
 def apply_neon_filter(surface):
-    """Neon-Filter: hohe SÃ¤ttigung, hoher Kontrast, psychedelisch"""
+    """Neon-Filter: hohe Sättigung, hoher Kontrast, psychedelisch"""
     return apply_advanced_filter(
         surface,
         contrast=1.5,
@@ -688,24 +776,24 @@ def apply_neon_filter(surface):
 
 
 def apply_vintage_filter(surface):
-    """Vintage-Filter: Sepia-Ã¤hnlich, weicher Kontrast"""
+    """Vintage-Filter: Sepia-ähnlich, weicher Kontrast"""
     return apply_advanced_filter(
         surface,
         contrast=0.9,
         brightness=-5,
         saturation=0.4,
-        hue_shift=40,  # Warme TÃ¶ne
+        hue_shift=40,  # Warme Töne
         gamma=1.1
     )
 
 
 def apply_monochrome_filter(surface):
-    """Schwarz-WeiÃŸ Filter mit leichtem Blauton"""
+    """Schwarz-Weiß Filter mit leichtem Blauton"""
     return apply_advanced_filter(
         surface,
         contrast=1.2,
         brightness=0,
-        saturation=0.0,  # Keine SÃ¤ttigung = Graustufen
+        saturation=0.0,  # Keine Sättigung = Graustufen
         hue_shift=0,
         gamma=1.0
     )
@@ -774,7 +862,7 @@ def draw_card(surface, rect, title, content, theme_colors):
 pygame.init()
 
 # Globale Variablen
-game_state = 1  # Starte direkt im HauptmenÃ¼
+game_state = 1  # Starte direkt im Hauptmenü
 score = 0
 has_moved = False
 HighScore = 0
@@ -783,11 +871,11 @@ upload_status = ""
 fullscreen = False
 user_id = None
 
-# Fester Spielbereich (400x600) - NUR fÃ¼r Gameplay
+# Fester Spielbereich (400x600) - NUR für Gameplay
 GAME_WIDTH, GAME_HEIGHT = 400, 600
 game_area = pygame.Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
 
-# Boden-HÃ¶he fÃ¼r prÃ¤zise Kollisionserkennung
+# Boden-Höhe für präzise Kollisionserkennung
 GROUND_HEIGHT = 64
 ACTUAL_PLAY_HEIGHT = GAME_HEIGHT - GROUND_HEIGHT
 
@@ -797,7 +885,7 @@ base_gap = 220
 difficulty_level = 0
 last_difficulty_update = 0
 
-# Globale Variablen fÃ¼r Schwierigkeitsparameter
+# Globale Variablen für Schwierigkeitsparameter
 difficulty_presets = {
     "Normal": {
         "pipe_spacing": 200,
@@ -914,7 +1002,7 @@ if fullscreen:
     game_area.x = (window_w - GAME_WIDTH) // 2
     game_area.y = (window_h - GAME_HEIGHT) // 2
 else:
-    window_w, window_h = 800, 600  # KORRIGIERTE FenstergrÃ¶ÃŸe
+    window_w, window_h = 800, 600  # KORRIGIERTE Fenstergröße
     screen = pygame.display.set_mode((window_w, window_h))
     # Zentriere das Spielbereich
     game_area.x = (window_w - GAME_WIDTH) // 2
@@ -982,7 +1070,7 @@ pipe_down_img = theme_images["pipe_down"]
 ground_img = theme_images["ground"]
 bg_img = theme_images["background"]
 
-# Masken fÃ¼r die Rohre (jetzt theme-spezifisch)
+# Masken für die Rohre (jetzt theme-spezifisch)
 pipe_up_mask = theme_masks["pipe_up_mask"]
 pipe_down_mask = theme_masks["pipe_down_mask"]
 
@@ -1046,7 +1134,7 @@ def scoreboard():
 
 
 def draw_death_screen():
-    """Modernes Game Over MenÃ¼ - nutzt VOLLBILD (800x600)"""
+    """Modernes Game Over Menü - nutzt VOLLBILD (800x600)"""
     # Halbtransparenter Overlay
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 150))
@@ -1092,7 +1180,7 @@ def draw_death_screen():
 
 
 def draw_main_menu():
-    """Modernes HauptmenÃ¼ - nutzt VOLLBILD (800x600)"""
+    """Modernes Hauptmenü - nutzt VOLLBILD (800x600)"""
     # Hintergrund-Overlay
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 120))
@@ -1149,7 +1237,7 @@ def draw_main_menu():
 
 
 def draw_pause_screen():
-    """Modernes Pause MenÃ¼"""
+    """Modernes Pause Menü"""
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 150))
     screen.blit(overlay, (0, 0))
@@ -1174,7 +1262,7 @@ def draw_pause_screen():
 
 
 def draw_settings_screen():
-    """Modernes EinstellungsmenÃ¼ - nutzt VOLLBILD"""
+    """Modernes Einstellungsmenü - nutzt VOLLBILD"""
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 150))
     screen.blit(overlay, (0, 0))
@@ -1184,9 +1272,9 @@ def draw_settings_screen():
     title_rect = title_text.get_rect(center=(window_w // 2, 50))
     screen.blit(title_text, title_rect)
 
-    # ZurÃ¼ck-Button
+    # Zurück-Button
     back_button = pygame.Rect(50, 30, 120, 40)
-    draw_modern_button(screen, back_button, "â† BACK", font_tiny, themes[current_theme]["accent_color"])
+    draw_modern_button(screen, back_button, "← BACK", font_tiny, themes[current_theme]["accent_color"])
 
     # Einstellungskarten
     card_y = 120
@@ -1247,7 +1335,7 @@ def draw_settings_screen():
 
 
 def draw_theme_selection():
-    """Modernes Theme-Auswahl MenÃ¼"""
+    """Modernes Theme-Auswahl Menü"""
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 150))
     screen.blit(overlay, (0, 0))
@@ -1257,9 +1345,9 @@ def draw_theme_selection():
     title_rect = title_text.get_rect(center=(window_w // 2, 50))
     screen.blit(title_text, title_rect)
 
-    # ZurÃ¼ck-Button
+    # Zurück-Button
     back_button = pygame.Rect(50, 30, 120, 40)
-    draw_modern_button(screen, back_button, "â† BACK", font_tiny, themes[current_theme]["accent_color"])
+    draw_modern_button(screen, back_button, "← BACK", font_tiny, themes[current_theme]["accent_color"])
 
     # Theme-Grid
     theme_buttons = {}
@@ -1376,7 +1464,7 @@ def show_admin_editor():
     row += 1
 
     tk.Label(root, text="Schwierigkeit").grid(row=row, column=0, columnspan=2,
-              pady=10)
+                                              pady=10)
     row += 1
 
     tk.Label(root, text="Schwierigkeitsstufe:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
@@ -1396,7 +1484,7 @@ def show_admin_editor():
     tk.Entry(root, textvariable=velocity_multiplier_var).grid(row=row, column=1, padx=10, pady=5)
     row += 1
 
-    tk.Label(root, text="LÃ¼cken-Verringerung:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
+    tk.Label(root, text="Lücken-Verringerung:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
     tk.Entry(root, textvariable=gap_decrease_var).grid(row=row, column=1, padx=10, pady=5)
     row += 1
 
@@ -1404,7 +1492,7 @@ def show_admin_editor():
     tk.Entry(root, textvariable=spacing_decrease_var).grid(row=row, column=1, padx=10, pady=5)
     row += 1
 
-    tk.Label(root, text="Minimale LÃ¼cke:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
+    tk.Label(root, text="Minimale Lücke:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
     tk.Entry(root, textvariable=min_gap_var).grid(row=row, column=1, padx=10, pady=5)
     row += 1
 
@@ -1424,174 +1512,6 @@ def show_admin_editor():
     root.geometry('+{}+{}'.format(x, y))
 
     root.mainloop()
-
-
-# NEU: ERWEITERTE UPLOAD-FUNKTIONEN MIT VERIFIKATION
-
-def upload_highscore_direct(name):
-    """Direct upload function (original logic)"""
-    global upload_status, user_id
-
-    try:
-        url = "https://flappy-bird.nsce.fr/api/upload_score"
-        data = {
-            "name": name,
-            "score": HighScore,
-            "user_id": user_id,  # Now verified UID
-            "theme": current_theme,
-            "difficulty": current_difficulty_preset
-        }
-        response = requests.post(url, json=data, timeout=10)
-
-        if response.status_code == 200:
-            result = response.json()
-            upload_status = result.get("message", "Score uploaded successfully!")
-        else:
-            upload_status = f"Upload failed: {response.status_code}"
-    except Exception as e:
-        upload_status = f"Upload error: {str(e)}"
-
-
-# Globale Variable für Verifikations-URL (für Main-Thread Browser-Öffnung)
-pending_verification_url = None
-
-
-def open_browser_from_main_thread():
-    """Opens browser from main thread if URL is pending"""
-    global pending_verification_url
-    if pending_verification_url:
-        print(f"Opening browser with URL: {pending_verification_url}")
-        try:
-            webbrowser.open(pending_verification_url)
-            print("Browser opened successfully")
-        except Exception as e:
-            print(f"Error opening browser: {e}")
-        pending_verification_url = None
-
-
-def upload_highscore(name):
-    """Enhanced upload function with verification check"""
-    global upload_status, user_id
-
-    try:
-        upload_status = "Checking verification status..."
-        print(f"Starting verification check for user: {name}")
-
-        # 1. Check if user has local UID file
-        local_uid = load_local_user_id()
-        print(f"Local UID found: {local_uid}")
-
-        if local_uid:
-            # 2. Check if this UID is verified
-            upload_status = "Checking if already verified..."
-            is_verified = check_uid_verification_status(local_uid)
-            print(f"UID verification status: {is_verified}")
-
-            if is_verified:
-                # Already verified - proceed directly to upload
-                upload_status = "Already verified! Uploading score..."
-                user_id = local_uid  # Use the verified UID
-                upload_highscore_direct(name)
-                return
-
-        # 3. Not verified - need verification
-        upload_status = "Email verification required..."
-        print("Email verification required - showing dialog")
-
-        # Show explanation dialog
-        if not show_verification_dialog():
-            upload_status = "Upload cancelled by user"
-            print("User cancelled verification")
-            return
-
-        # 4. Start verification process
-        upload_status = "Starting verification process..."
-        print("Starting verification process...")
-        already_verified, verify_data, error = start_verification_process(local_uid)
-
-        if error:
-            upload_status = f"Verification error: {error}"
-            print(f"Verification error: {error}")
-            return
-
-        if already_verified:
-            # Somehow became verified between checks
-            upload_status = "Already verified! Uploading score..."
-            print("Became verified during process")
-            upload_highscore_direct(name)
-            return
-
-        # 5. Show URL dialog for manual browser opening
-        verify_url = verify_data['verifyUrl']
-        verification_id = verify_data['verificationId']
-        target_uid = verify_data['uid']
-
-        print(f"Verification URL: {verify_url}")
-        print(f"Verification ID: {verification_id}")
-
-        upload_status = "Opening verification dialog..."
-
-        # Show manual URL dialog
-        browser_opened = show_verification_url_dialog(verify_url)
-        print(f"Browser dialog result: {browser_opened}")
-
-        # 6. Wait for verification completion
-        upload_status = "Waiting for email verification... (Complete verification in browser)"
-        print("Waiting for verification completion...")
-        success, verified_uid, code = wait_for_verification_completion(verification_id)
-
-        if not success:
-            upload_status = f"Verification failed: {verified_uid or 'timeout'}"
-            print(f"Verification failed: {verified_uid}")
-            return
-
-        # 7. Verification successful - now upload
-        upload_status = "Email verified! Uploading highscore..."
-        user_id = verified_uid  # Use the verified UID
-        print(f"Verification successful! UID: {verified_uid}")
-
-        # The UID should now be saved to C:/NSCE/user_id.txt by the verification system
-        upload_highscore_direct(name)
-
-    except Exception as e:
-        upload_status = f"Verification error: {str(e)}"
-        print(f"Exception in upload_highscore: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def show_upload_dialog():
-    """Enhanced upload dialog with verification info"""
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-
-    # Check if already verified
-    local_uid = load_local_user_id()
-    verification_info = ""
-
-    try:
-        if local_uid and check_uid_verification_status(local_uid):
-            verification_info = "\n(Email already verified ✓)"
-        else:
-            verification_info = "\n(Email verification will be required)"
-    except:
-        verification_info = "\n(Email verification will be required)"
-
-    name = simpledialog.askstring("Highscore Upload",
-                                  f"Enter your name to share your highscore:{verification_info}",
-                                  parent=root)
-    root.destroy()
-
-    if name and name.strip():
-        upload_thread = threading.Thread(target=upload_highscore, args=(name.strip(),))
-        upload_thread.daemon = True
-        upload_thread.start()
-        return True
-    return False
-
-
-# ENDE NEUE UPLOAD-FUNKTIONEN
 
 
 class Pipe:
@@ -1750,7 +1670,7 @@ def game():
                     if show_password_dialog():
                         show_admin_editor()
 
-                if game_state == 1:  # HauptmenÃ¼
+                if game_state == 1:  # Hauptmenü
                     if event.key == pygame.K_SPACE:
                         player, pipes = reset_game()
                         game_state = 2
@@ -1759,7 +1679,7 @@ def game():
                     elif event.key == pygame.K_t:
                         game_state = 7
                     elif event.key == pygame.K_u and HighScore > 0:
-                        if show_upload_dialog():  # NEU: Mit Verifikation
+                        if show_upload_dialog():  # VEREINFACHT: Direkt zur Code-Eingabe
                             game_state = 5
 
                 elif game_state == 2:  # Spielzustand
@@ -1785,12 +1705,12 @@ def game():
                     elif event.key == pygame.K_b:
                         game_state = 1
 
-                elif game_state == 5:  # Upload-BestÃ¤tigung
+                elif game_state == 5:  # Upload-Bestätigung
                     if event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
                         game_state = 1
 
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if game_state == 1 and main_menu_buttons:  # HauptmenÃ¼
+                if game_state == 1 and main_menu_buttons:  # Hauptmenü
                     start_rect, settings_rect, themes_rect = main_menu_buttons
                     if start_rect.collidepoint(mouse_pos):
                         pygame.mixer.Sound.play(select_sfx)
@@ -1931,11 +1851,11 @@ def game():
         # Zeichnen
         screen.fill(themes[current_theme]["bg_color"])
 
-        # Spielbereich-Rahmen (nur wÃ¤hrend Gameplay)
+        # Spielbereich-Rahmen (nur während Gameplay)
         if game_state == 2:
             pygame.draw.rect(screen, (50, 50, 50), game_area, 2)
 
-        # Spielbereich-Inhalt (nur wÃ¤hrend Gameplay)
+        # Spielbereich-Inhalt (nur während Gameplay)
         if game_state == 2:
             screen.set_clip(game_area)
             screen.blit(bg_img, (game_area.x + bg_x_pos, game_area.y))
@@ -1953,7 +1873,7 @@ def game():
         # Sync status indicator (OPTIMIZED - no network requests in main loop!)
         draw_sync_status()
 
-        # MenÃ¼-Overlays (nutzen VOLLBILD)
+        # Menü-Overlays (nutzen VOLLBILD)
         if game_state == 1:
             main_menu_buttons = draw_main_menu()
         elif game_state == 3:
@@ -1961,7 +1881,7 @@ def game():
         elif game_state == 4:
             pause_screen_buttons = draw_pause_screen()
         elif game_state == 5:
-            # Upload-BestÃ¤tigung
+            # Upload-Bestätigung
             overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 150))
             screen.blit(overlay, (0, 0))
