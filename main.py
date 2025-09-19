@@ -17,21 +17,21 @@ from pygame import rect
 
 # Firebase Configuration
 FIREBASE_CONFIG = {
-    "apiKey": "AIzaSyCs0xM154UTEUxhOCv-FqqL1i6zHlZHfug",
-    "authDomain": "nsce-fr1.firebaseapp.com",
-    "databaseURL": "https://nsce-fr1-default-rtdb.europe-west1.firebasedatabase.app",
-    "projectId": "nsce-fr1",
-    "storageBucket": "nsce-fr1.firebasestorage.app",
-    "messagingSenderId": "344286384535",
-    "appId": "1:344286384535:web:2340d545eda9bc21f474d2",
-    "measurementId": "G-H7CH1CVCE4"
+    "apiKey": "nutzt-deine",
+    "authDomain": "nutzt-deine.firebaseapp.com",
+    "databaseURL": "https://nutzt-deine.firebasedatabase.app",
+    "projectId": "nutzt-deine",
+    "storageBucket": "nutzt-deine.firebasestorage.app",
+    "messagingSenderId": "nutzt-deine",
+    "appId": "nutzt-deine",
+    "measurementId": "nutzt-deine"
 }
 
 # Firebase Realtime Database URL
 FIREBASE_DB_URL = FIREBASE_CONFIG["databaseURL"]
 
 # NEU: Verifikations-URLs
-VERIFY_BASE_URL = "https://verify.nsce.fr"
+VERIFY_BASE_URL = "nutzt-deine"
 VERIFY_API_URL = f"{VERIFY_BASE_URL}/api"
 
 # Performance optimization - Sync status caching
@@ -1382,7 +1382,7 @@ def show_password_dialog():
     root.attributes("-topmost", True)
     password = simpledialog.askstring("Admin Login", "Enter password:", show='*', parent=root)
     root.destroy()
-    return password == "ndnet-asAdmin"
+    return password == "nutzt-deins"
 
 
 def show_admin_editor():
