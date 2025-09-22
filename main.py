@@ -7,39 +7,8 @@ from tkinter import simpledialog, messagebox
 import requests
 import threading
 import json
-import numpy as np
-import math
-import uuid
-import time
-import webbrowser  # NEU: Für Verifikation
 
 from pygame import rect
-
-# Firebase Configuration
-FIREBASE_CONFIG = {
-    "apiKey": "nutzt-deine",
-    "authDomain": "nutzt-deine.firebaseapp.com",
-    "databaseURL": "https://nutzt-deine.firebasedatabase.app",
-    "projectId": "nutzt-deine",
-    "storageBucket": "nutzt-deine.firebasestorage.app",
-    "messagingSenderId": "nutzt-deine",
-    "appId": "nutzt-deine",
-    "measurementId": "nutzt-deine"
-}
-
-# Firebase Realtime Database URL
-FIREBASE_DB_URL = FIREBASE_CONFIG["databaseURL"]
-
-# NEU: Verifikations-URLs
-VERIFY_BASE_URL = "nutzt-deine"
-VERIFY_API_URL = f"{VERIFY_BASE_URL}/api"
-
-# Performance optimization - Sync status caching
-sync_status_cache = {
-    "status": "unknown",
-    "last_check": 0,
-    "check_interval": 5.0  # Check every 5 seconds instead of every frame
-}
 
 
 # Funktion für Ressourcenpfade (wichtig für PyInstaller)
@@ -65,825 +34,31 @@ def resource_path(relative_path):
     return path
 
 
-# Firebase Settings Functions
-def load_settings_from_firebase():
-    """Load settings from Firebase Realtime Database (primary storage)"""
-    global HighScore, current_theme, current_difficulty_preset, fullscreen, user_id
-
-    try:
-        # Try to load existing user_id from fallback location
-        local_user_id = load_local_user_id()
-
-        if local_user_id:
-            user_id = local_user_id
-            # Try to load settings for this user from Firebase
-            url = f"{FIREBASE_DB_URL}/users/{user_id}/settings.json"
-            response = requests.get(url, timeout=5)
-
-            if response.status_code == 200 and response.json():
-                settings = response.json()
-                HighScore = settings.get('high_score', 0)
-                current_theme = settings.get('theme', 'Classic')
-                current_difficulty_preset = settings.get('difficulty', 'Normal')
-                fullscreen = settings.get('fullscreen', False)
-                print(f"Settings loaded from Firebase for user: {user_id}")
-                return True
-
-        # If no existing user or settings, create new user
-        user_id = str(uuid.uuid4())
-        save_local_user_id(user_id)  # Save user_id to C:/NSCE/ as fallback
-        save_settings_to_firebase()  # Create initial settings in Firebase
-        print(f"New user created: {user_id}")
-        return True
-
-    except Exception as e:
-        print(f"Error loading from Firebase: {e}")
-        # Use default values if Firebase fails
-        if not user_id:
-            user_id = str(uuid.uuid4())
-            save_local_user_id(user_id)
-        return False
-
-
-def save_settings_to_firebase():
-    """Save settings to Firebase Realtime Database (primary storage)"""
-    if not user_id:
-        print("No user_id available for saving settings")
-        return False
-
-    settings = {
-        'user_id': user_id,
-        'high_score': HighScore,
-        'theme': current_theme,
-        'difficulty': current_difficulty_preset,
-        'fullscreen': fullscreen,
-        'last_updated': int(time.time())
-    }
-
-    try:
-        url = f"{FIREBASE_DB_URL}/users/{user_id}/settings.json"
-        response = requests.put(url, json=settings, timeout=5)
-
-        if response.status_code == 200:
-            print("Settings saved to Firebase successfully")
-            return True
-        else:
-            print(f"Failed to save to Firebase: {response.status_code}")
-            return False
-
-    except Exception as e:
-        print(f"Error saving to Firebase: {e}")
-        return False
-
-
-def load_local_user_id():
-    """Load user_id from C:/NSCE/user_id.txt (fallback only)"""
-    try:
-        nsce_path = "C:/NSCE"
-        user_id_file = os.path.join(nsce_path, "user_id.txt")
-
-        if os.path.exists(user_id_file):
-            with open(user_id_file, 'r') as f:
-                user_id = f.read().strip()
-                if user_id:  # Make sure it's not empty
-                    return user_id
-
-    except Exception as e:
-        print(f"Error loading user_id from C:/NSCE/: {e}")
-    return None
-
-
-def save_local_user_id(uid):
-    """Save user_id to C:/NSCE/user_id.txt (fallback only)"""
-    try:
-        nsce_path = "C:/NSCE"
-        user_id_file = os.path.join(nsce_path, "user_id.txt")
-
-        # Create directory if it doesn't exist
-        os.makedirs(nsce_path, exist_ok=True)
-
-        with open(user_id_file, 'w') as f:
-            f.write(uid)
-
-        print(f"User ID saved to {user_id_file}")
-
-    except Exception as e:
-        print(f"Error saving user_id to C:/NSCE/: {e}")
-
-
-def sync_high_score_to_firebase():
-    """Special function to sync high score immediately when achieved"""
-    if not user_id:
-        return
-
-    try:
-        url = f"{FIREBASE_DB_URL}/users/{user_id}/settings/high_score.json"
-        response = requests.put(url, json=HighScore, timeout=3)
-
-        if response.status_code == 200:
-            print(f"High score {HighScore} synced to Firebase")
-        else:
-            print(f"Failed to sync high score: {response.status_code}")
-
-    except Exception as e:
-        print(f"Error syncing high score: {e}")
-
-
-def save_settings_async():
-    """Save settings asynchronously to avoid blocking the game"""
-
-    def _save():
-        save_settings_to_firebase()
-
-    thread = threading.Thread(target=_save)
-    thread.daemon = True
-    thread.start()
-
-
-def update_high_score(new_score):
-    """Update high score and sync to Firebase immediately"""
-    global HighScore
-
-    if new_score > HighScore:
-        HighScore = new_score
-
-        # Sync to Firebase in background thread to avoid blocking
-        def _sync():
-            sync_high_score_to_firebase()
-
-        thread = threading.Thread(target=_sync)
-        thread.daemon = True
-        thread.start()
-
-        print(f"New high score: {HighScore}")
-
-
-# NEU: VEREINFACHTE VERIFIKATIONS-FUNKTIONEN
-
-def check_uid_verification_status(uid):
-    """Check if UID is already verified via verify.nsce.fr API"""
-    try:
-        response = requests.get(f"{VERIFY_API_URL}/check-uid/{uid}", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('verified', False)
-        else:
-            print(f"Error checking UID status: {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"Error checking verification status: {e}")
-        return False
-
-
-def start_verification_process(uid=None):
-    """Start verification process via verify.nsce.fr API"""
-    try:
-        payload = {}
-        if uid:
-            payload['uid'] = uid
-
-        response = requests.post(f"{VERIFY_API_URL}/request", json=payload, timeout=10)
-
-        if response.status_code == 200:
-            data = response.json()
-
-            # Check if already verified
-            if data.get('alreadyVerified'):
-                return True, None, data.get('message', 'Already verified')
-
-            # Return verification data
-            return False, {
-                'verificationId': data.get('verificationId'),
-                'uid': data.get('uid'),
-                'verifyUrl': data.get('verifyUrl')
-            }, None
-        else:
-            return False, None, f"API Error: {response.status_code}"
-
-    except Exception as e:
-        return False, None, f"Connection error: {str(e)}"
-
-
-def show_code_input_dialog():
-    """SIMPLIFIED: Direct 6-digit code input without explanations"""
-    root = tk.Tk()
-    root.title("Enter 6-digit Code")
-    root.geometry("350x200")
-    root.resizable(False, False)
-    root.attributes("-topmost", True)
-
-    # Center dialog
-    root.update_idletasks()
-    x = (root.winfo_screenwidth() // 2) - (root.winfo_width() // 2)
-    y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
-    root.geometry(f'+{x}+{y}')
-
-    result = {"code": None, "cancelled": False}
-
-    def on_submit():
-        code = code_entry.get().strip()
-        if len(code) == 6 and code.isdigit():
-            result["code"] = code
-            root.destroy()
-        else:
-            error_label.config(text="Must be exactly 6 digits!", fg="red")
-
-    def on_cancel():
-        result["cancelled"] = True
-        root.destroy()
-
-    # Title
-    tk.Label(root, text="Enter 6-digit Code", font=("Arial", 16, "bold")).pack(pady=15)
-
-    # Simple instruction
-    tk.Label(root, text="Enter the code from the verification website:",
-             font=("Arial", 10)).pack(pady=5)
-
-    # Code input
-    code_entry = tk.Entry(root, font=("Arial", 16), width=8, justify="center")
-    code_entry.pack(pady=15)
-    code_entry.focus()
-
-    # Error label
-    error_label = tk.Label(root, text="", font=("Arial", 9))
-    error_label.pack()
-
-    # Buttons
-    button_frame = tk.Frame(root)
-    button_frame.pack(pady=15)
-
-    tk.Button(button_frame, text="Submit", command=on_submit,
-              bg="#4CAF50", fg="white", font=("Arial", 10, "bold"),
-              width=10).pack(side="left", padx=5)
-    tk.Button(button_frame, text="Cancel", command=on_cancel,
-              bg="#f44336", fg="white", font=("Arial", 10),
-              width=10).pack(side="left", padx=5)
-
-    # Enter key binding
-    root.bind('<Return>', lambda e: on_submit())
-    root.bind('<Escape>', lambda e: on_cancel())
-
-    root.mainloop()
-
-    if result["cancelled"]:
-        return None
-    return result["code"]
-
-
-def verify_6_digit_code(verification_id, code):
-    """Verify the 6-digit code with the backend"""
-    try:
-        # Check if the verification is ready and get the code
-        response = requests.get(f"{VERIFY_API_URL}/get-code/{verification_id}", timeout=10)
-
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('ready'):
-                # Compare the codes
-                if data.get('code') == code:
-                    return True, data.get('uid'), "Code correct"
-                else:
-                    return False, None, "Wrong code"
-            else:
-                return False, None, "Email verification not completed yet"
-        elif response.status_code == 404:
-            return False, None, "Verification session not found"
-        else:
-            return False, None, f"API Error: {response.status_code}"
-
-    except Exception as e:
-        return False, None, f"Connection error: {str(e)}"
-
-
-def wait_for_verification_completion(verification_id):
-    """Simplified - just shows code input"""
-    try:
-        print("Showing code input dialog...")
-        code = show_code_input_dialog()
-
-        if not code:
-            return False, "User cancelled", None
-
-        print(f"User entered code: {code}")
-
-        # Verify the code with backend
-        success, uid, message = verify_6_digit_code(verification_id, code)
-
-        if success:
-            print(f"Code verification successful! UID: {uid}")
-            save_local_user_id(uid)
-            return True, uid, message
-        else:
-            print(f"Code verification failed: {message}")
-            return False, message, None
-
-    except Exception as e:
-        print(f"Exception in wait_for_verification_completion: {e}")
-        return False, f"Error: {str(e)}", None
-
-
-def upload_highscore(name):
-    """Simplified upload function - goes directly to code input"""
-    global upload_status, user_id
-
-    try:
-        upload_status = "Checking verification status..."
-        print(f"Starting verification check for user: {name}")
-
-        # 1. Check if user has local UID file
-        local_uid = load_local_user_id()
-        print(f"Local UID found: {local_uid}")
-
-        if local_uid:
-            # 2. Check if this UID is verified
-            upload_status = "Checking if already verified..."
-            is_verified = check_uid_verification_status(local_uid)
-            print(f"UID verification status: {is_verified}")
-
-            if is_verified:
-                # Already verified - proceed directly to upload
-                upload_status = "Already verified! Uploading score..."
-                user_id = local_uid
-                upload_highscore_direct(name)
-                return
-
-        # 3. Not verified - start verification process directly
-        upload_status = "Starting verification process..."
-        print("Starting verification process...")
-        already_verified, verify_data, error = start_verification_process(local_uid)
-
-        if error:
-            upload_status = f"Verification error: {error}"
-            print(f"Verification error: {error}")
-            return
-
-        if already_verified:
-            upload_status = "Already verified! Uploading score..."
-            print("Became verified during process")
-            upload_highscore_direct(name)
-            return
-
-        # 4. Get verification data
-        verify_url = verify_data['verifyUrl']
-        verification_id = verify_data['verificationId']
-        target_uid = verify_data['uid']
-
-        print(f"Verification URL: {verify_url}")
-        print(f"Verification ID: {verification_id}")
-
-        # 5. Show URL and try to open browser automatically
-        upload_status = f"Opening browser: {verify_url}"
-
-        # Try to open browser automatically
-        try:
-            webbrowser.open(verify_url)
-            print("Browser opened automatically")
-            upload_status = "Browser opened - complete verification then enter code"
-        except Exception as e:
-            print(f"Could not open browser: {e}")
-            upload_status = f"Go to: {verify_url} then enter code"
-
-        # 6. Direct code input (up to 3 attempts)
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            print(f"Code input attempt {attempt + 1}/{max_attempts}")
-
-            upload_status = f"Enter 6-digit code (Attempt {attempt + 1}/{max_attempts})"
-            success, verified_uid, message = wait_for_verification_completion(verification_id)
-
-            if success:
-                upload_status = "Email verified! Uploading highscore..."
-                user_id = verified_uid
-                print(f"Verification successful! UID: {verified_uid}")
-                upload_highscore_direct(name)
-                return
-            else:
-                upload_status = f"Wrong code: {message}"
-                print(f"Verification attempt {attempt + 1} failed: {message}")
-
-                if attempt < max_attempts - 1:
-                    upload_status = f"Wrong code. Try again ({attempt + 2}/{max_attempts})"
-                else:
-                    upload_status = f"Verification failed after {max_attempts} attempts"
-                    return
-
-    except Exception as e:
-        upload_status = f"Verification error: {str(e)}"
-        print(f"Exception in upload_highscore: {e}")
-        import traceback
-        traceback.print_exc()
-
-
-def show_upload_dialog():
-    """Simplified upload dialog"""
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-
-    name = simpledialog.askstring("Upload Highscore", "Enter your name:", parent=root)
-    root.destroy()
-
-    if name and name.strip():
-        upload_thread = threading.Thread(target=upload_highscore, args=(name.strip(),))
-        upload_thread.daemon = True
-        upload_thread.start()
-        return True
-    return False
-
-
-def upload_highscore_direct(name):
-    """Direct upload function (original logic)"""
-    global upload_status, user_id
-
-    try:
-        url = "https://flappy-bird.nsce.fr/api/upload_score"
-        data = {
-            "name": name,
-            "score": HighScore,
-            "user_id": user_id,  # Now verified UID
-            "theme": current_theme,
-            "difficulty": current_difficulty_preset
-        }
-        response = requests.post(url, json=data, timeout=10)
-
-        if response.status_code == 200:
-            result = response.json()
-            upload_status = result.get("message", "Score uploaded successfully!")
-        else:
-            upload_status = f"Upload failed: {response.status_code}"
-    except Exception as e:
-        upload_status = f"Upload error: {str(e)}"
-
-
-# ENDE VERIFIKATIONS-FUNKTIONEN
-
-
-def change_theme(new_theme):
-    """Change theme and save to Firebase"""
-    global current_theme
-    current_theme = new_theme
-    save_settings_async()
-
-
-def change_difficulty(new_difficulty):
-    """Change difficulty and save to Firebase"""
-    global current_difficulty_preset
-    current_difficulty_preset = new_difficulty
-    save_settings_async()
-
-
-def load_settings():
-    """Main settings loading function (Firebase primary, no local fallback)"""
-    success = load_settings_from_firebase()
-    if not success:
-        print("Using default settings - Firebase unavailable")
-
-
-def save_settings():
-    """Main settings saving function (Firebase only)"""
-    save_settings_to_firebase()
-
-
-def check_sync_status_async():
-    """Check sync status in background thread"""
-    global sync_status_cache
-
-    def _check():
-        try:
-            if not user_id:
-                sync_status_cache["status"] = "no_user"
-                return
-
-            url = f"{FIREBASE_DB_URL}/users/{user_id}/settings/high_score.json"
-            response = requests.get(url, timeout=2)
-            if response.status_code == 200:
-                sync_status_cache["status"] = "connected"
-            else:
-                sync_status_cache["status"] = "error"
-        except:
-            sync_status_cache["status"] = "offline"
-
-        sync_status_cache["last_check"] = time.time()
-
-    thread = threading.Thread(target=_check)
-    thread.daemon = True
-    thread.start()
-
-
-def draw_sync_status():
-    """Draw sync status indicator (OPTIMIZED - no network requests in main loop)"""
-    current_time = time.time()
-
-    # Only check status every few seconds, not every frame!
-    if current_time - sync_status_cache["last_check"] > sync_status_cache["check_interval"]:
-        check_sync_status_async()
-
-    # Use cached status
-    status = sync_status_cache["status"]
-
-    if status == "connected":
-        status_color = (0, 255, 0)  # Green
-        status_text = "⬢ "
-    elif status == "error":
-        status_color = (255, 165, 0)  # Orange
-        status_text = "⚠ "
-    else:  # offline, no_user, unknown
-        status_color = (255, 0, 0)  # Red
-        status_text = "⬢"
-
-    # Draw status indicator in corner
-    status_surface = font_tiny.render(status_text, True, status_color)
-    screen.blit(status_surface, (window_w - 30, 10))
-
-
-# Optimized filter functions with caching
-filter_cache = {}
-
-
-def get_cached_filtered_image(base_image, filter_func, cache_key):
-    """Get filtered image from cache or create and cache it"""
-    if cache_key not in filter_cache:
-        if filter_func:
-            filter_cache[cache_key] = filter_func(base_image)
-        else:
-            filter_cache[cache_key] = base_image.copy()
-    return filter_cache[cache_key]
-
-
-def clear_filter_cache():
-    """Clear filter cache to free memory"""
-    global filter_cache
-    filter_cache.clear()
-
-
-# Erweiterte Filter-Funktionen mit präziser Pixel-Manipulation
-def apply_hsl_filter(surface, hue_shift=0, saturation_mult=1.0, lightness_mult=1.0):
-    """Erweiterte HSL-Filter-Funktion für präzise Farbmanipulation"""
-    # Konvertierte Surface zu Pixel-Array
-    arr = pygame.surfarray.array3d(surface).astype(float)
-    h, w, c = arr.shape
-
-    # RGB zu HSL konvertieren
-    r, g, b = arr[:, :, 0] / 255.0, arr[:, :, 1] / 255.0, arr[:, :, 2] / 255.0
-
-    max_val = np.maximum(np.maximum(r, g), b)
-    min_val = np.minimum(np.minimum(r, g), b)
-    diff = max_val - min_val
-
-    # Lightness
-    l = (max_val + min_val) / 2.0
-
-    # Saturation
-    s = np.where(diff == 0, 0, np.where(l < 0.5, diff / (max_val + min_val), diff / (2.0 - max_val - min_val)))
-
-    # Hue
-    h_val = np.zeros_like(r)
-    mask_r = (max_val == r) & (diff != 0)
-    mask_g = (max_val == g) & (diff != 0)
-    mask_b = (max_val == b) & (diff != 0)
-
-    h_val[mask_r] = (60 * ((g[mask_r] - b[mask_r]) / diff[mask_r]) + 360) % 360
-    h_val[mask_g] = (60 * ((b[mask_g] - r[mask_g]) / diff[mask_g]) + 120) % 360
-    h_val[mask_b] = (60 * ((r[mask_b] - g[mask_b]) / diff[mask_b]) + 240) % 360
-
-    # Filter anwenden
-    h_val = (h_val + hue_shift) % 360
-    s = np.clip(s * saturation_mult, 0, 1)
-    l = np.clip(l * lightness_mult, 0, 1)
-
-    # HSL zurück zu RGB
-    c_val = (1 - np.abs(2 * l - 1)) * s
-    x = c_val * (1 - np.abs((h_val / 60) % 2 - 1))
-    m = l - c_val / 2
-
-    r_new, g_new, b_new = np.zeros_like(h_val), np.zeros_like(h_val), np.zeros_like(h_val)
-
-    mask1 = (h_val >= 0) & (h_val < 60)
-    mask2 = (h_val >= 60) & (h_val < 120)
-    mask3 = (h_val >= 120) & (h_val < 180)
-    mask4 = (h_val >= 180) & (h_val < 240)
-    mask5 = (h_val >= 240) & (h_val < 300)
-    mask6 = (h_val >= 300) & (h_val < 360)
-
-    r_new[mask1], g_new[mask1], b_new[mask1] = c_val[mask1], x[mask1], 0
-    r_new[mask2], g_new[mask2], b_new[mask2] = x[mask2], c_val[mask2], 0
-    r_new[mask3], g_new[mask3], b_new[mask3] = 0, c_val[mask3], x[mask3]
-    r_new[mask4], g_new[mask4], b_new[mask4] = 0, x[mask4], c_val[mask4]
-    r_new[mask5], g_new[mask5], b_new[mask5] = x[mask5], 0, c_val[mask5]
-    r_new[mask6], g_new[mask6], b_new[mask6] = c_val[mask6], 0, x[mask6]
-
-    r_new = (r_new + m) * 255
-    g_new = (g_new + m) * 255
-    b_new = (b_new + m) * 255
-
-    # Zurück zur Surface
-    new_arr = np.stack([r_new, g_new, b_new], axis=2).astype(np.uint8)
-    new_surface = pygame.surfarray.make_surface(new_arr)
-
-    # Alpha-Kanal beibehalten
-    if surface.get_flags() & pygame.SRCALPHA:
-        new_surface = new_surface.convert_alpha()
-        alpha_arr = pygame.surfarray.array_alpha(surface)
-        pygame.surfarray.pixels_alpha(new_surface)[:] = alpha_arr
-
-    return new_surface
-
-
-def apply_advanced_filter(surface, contrast=1.0, brightness=0, saturation=1.0, hue_shift=0, gamma=1.0):
-    """Erweiterte Filter-Funktion mit mehreren Parametern"""
-    try:
-        # Pixel-Array erstellen
-        arr = pygame.surfarray.array3d(surface).astype(float)
-
-        # Gamma-Korrektur
-        if gamma != 1.0:
-            arr = np.power(arr / 255.0, gamma) * 255.0
-
-        # Kontrast und Helligkeit
-        arr = arr * contrast + brightness
-        arr = np.clip(arr, 0, 255)
-
-        # Zu Surface zurück konvertieren
-        new_surface = pygame.surfarray.make_surface(arr.astype(np.uint8))
-
-        # HSL-Filter anwenden wenn nötig
-        if saturation != 1.0 or hue_shift != 0:
-            new_surface = apply_hsl_filter(new_surface, hue_shift, saturation, 1.0)
-
-        # Alpha-Kanal beibehalten
-        if surface.get_flags() & pygame.SRCALPHA:
-            new_surface = new_surface.convert_alpha()
-            try:
-                alpha_arr = pygame.surfarray.array_alpha(surface)
-                pygame.surfarray.pixels_alpha(new_surface)[:] = alpha_arr
-            except:
-                # Fallback wenn Alpha-Handling fehlschlägt
-                new_surface.set_alpha(surface.get_alpha())
-
-        return new_surface
-    except Exception:
-        # Fallback zu einfacher Kopie wenn Filter fehlschlägt
-        return surface.copy()
-
-
-# Spezifische Theme-Filter
-def apply_night_filter(surface):
-    """Nacht-Filter: dunkler, bläulich, hoher Kontrast"""
-    return apply_advanced_filter(
-        surface,
-        contrast=1.3,
-        brightness=-30,
-        saturation=0.7,
-        hue_shift=180,  # Richtung Blau
-        gamma=0.8
-    )
-
-
-def apply_desert_filter(surface):
-    """Wüsten-Filter: wärmer, orange/gelb, heller"""
-    return apply_advanced_filter(
-        surface,
-        contrast=1.1,
-        brightness=20,
-        saturation=1.3,
-        hue_shift=30,  # Richtung Orange/Gelb
-        gamma=1.2
-    )
-
-
-def apply_retro_filter(surface):
-    """Retro-Filter: grünlich, niedriger Kontrast, dunkel"""
-    return apply_advanced_filter(
-        surface,
-        contrast=0.8,
-        brightness=-10,
-        saturation=0.6,
-        hue_shift=120,  # Richtung Grün
-        gamma=0.9
-    )
-
-
-def apply_neon_filter(surface):
-    """Neon-Filter: hohe Sättigung, hoher Kontrast, psychedelisch"""
-    return apply_advanced_filter(
-        surface,
-        contrast=1.5,
-        brightness=10,
-        saturation=2.0,
-        hue_shift=280,  # Richtung Magenta
-        gamma=1.1
-    )
-
-
-def apply_vintage_filter(surface):
-    """Vintage-Filter: Sepia-ähnlich, weicher Kontrast"""
-    return apply_advanced_filter(
-        surface,
-        contrast=0.9,
-        brightness=-5,
-        saturation=0.4,
-        hue_shift=40,  # Warme Töne
-        gamma=1.1
-    )
-
-
-def apply_monochrome_filter(surface):
-    """Schwarz-Weiß Filter mit leichtem Blauton"""
-    return apply_advanced_filter(
-        surface,
-        contrast=1.2,
-        brightness=0,
-        saturation=0.0,  # Keine Sättigung = Graustufen
-        hue_shift=0,
-        gamma=1.0
-    )
-
-
-# Moderne UI Helper-Funktionen (subtiler)
-def draw_modern_button(surface, rect, text, font, color, hover=False, pressed=False):
-    """Zeichnet einen modernen Button mit subtilen Effekten"""
-    # Schatten
-    shadow_rect = rect.copy()
-    shadow_rect.x += 2
-    shadow_rect.y += 2
-    pygame.draw.rect(surface, (0, 0, 0, 30), shadow_rect, border_radius=8)
-
-    # Button-Farben
-    if pressed:
-        button_color = tuple(max(0, c - 20) for c in color)
-    elif hover:
-        button_color = tuple(min(255, c + 15) for c in color)
-    else:
-        button_color = color
-
-    # Hauptbutton
-    pygame.draw.rect(surface, button_color, rect, border_radius=8)
-
-    # Dezenter Rand
-    border_color = tuple(max(0, c - 40) for c in button_color)
-    pygame.draw.rect(surface, border_color, rect, width=2, border_radius=8)
-
-    # Text
-    text_color = (255, 255, 255) if sum(color) < 400 else (0, 0, 0)
-    text_surface = font.render(text, True, text_color)
-    text_rect = text_surface.get_rect(center=rect.center)
-    if pressed:
-        text_rect.x += 1
-        text_rect.y += 1
-
-    surface.blit(text_surface, text_rect)
-
-
-def draw_card(surface, rect, title, content, theme_colors):
-    """Zeichnet eine moderne Karte mit Titel und Inhalt"""
-    # Schatten
-    shadow_rect = rect.copy()
-    shadow_rect.x += 3
-    shadow_rect.y += 3
-    pygame.draw.rect(surface, (0, 0, 0, 20), shadow_rect, border_radius=12)
-
-    # Karten-Hintergrund
-    card_color = (240, 240, 245) if sum(theme_colors["bg_color"]) > 400 else (40, 40, 50)
-    pygame.draw.rect(surface, card_color, rect, border_radius=12)
-
-    # Dezenter Rand
-    border_color = theme_colors["highlight_color"]
-    pygame.draw.rect(surface, border_color, rect, width=2, border_radius=12)
-
-    # Titel
-    if title:
-        title_color = theme_colors["text_color"]
-        title_surface = font_small.render(title, True, title_color)
-        title_pos = (rect.x + 20, rect.y + 15)
-        surface.blit(title_surface, title_pos)
-
-
 # Initialize Game
 pygame.init()
 
 # Globale Variablen
-game_state = 1  # Starte direkt im Hauptmenü
+game_state = 0  # 0: Start Screen, 1: Hauptmenü, 2: Spiel, 3: Tod, 4: Pause, 5: Upload-Bestätigung, 6: Einstellungen, 7: Theme-Auswahl
 score = 0
 has_moved = False
 HighScore = 0
 window_focused = True
-upload_status = ""
-fullscreen = False
-user_id = None
+upload_status = ""  # Status des Upload-Versuchs
+fullscreen = False  # Vollbildmodus
 
-# Fester Spielbereich (400x600) - NUR für Gameplay
+# Fester Spielbereich (400x600) - UNVERÄNDERLICH
 GAME_WIDTH, GAME_HEIGHT = 400, 600
 game_area = pygame.Rect(0, 0, GAME_WIDTH, GAME_HEIGHT)
 
 # Boden-Höhe für präzise Kollisionserkennung
-GROUND_HEIGHT = 64
-ACTUAL_PLAY_HEIGHT = GAME_HEIGHT - GROUND_HEIGHT
+GROUND_HEIGHT = 64  # Höhe des Bodens in Pixeln
+ACTUAL_PLAY_HEIGHT = GAME_HEIGHT - GROUND_HEIGHT  # 536 Pixel spielbare Höhe
 
 # Schwierigkeits-Variablen
-base_pipe_velocity = 2.4
-base_gap = 220
-difficulty_level = 0
-last_difficulty_update = 0
+base_pipe_velocity = 2.4  # Basisgeschwindigkeit der Rohre
+base_gap = 220  # Basis-Lücke zwischen den Rohren
+difficulty_level = 0  # Aktuelles Schwierigkeitslevel
+last_difficulty_update = 0  # Score bei der letzten Schwierigkeitsanpassung
 
 # Globale Variablen für Schwierigkeitsparameter
 difficulty_presets = {
@@ -916,85 +91,76 @@ difficulty_presets = {
     }
 }
 
-current_difficulty_preset = "Normal"
+current_difficulty_preset = "Normal"  # Standard-Schwierigkeitsstufe
 
-# Erweiterte Themes
+# Themes
 themes = {
     "Classic": {
+        "background": "images/background.png",
+        "ground": "images/ground.png",
+        "player": "images/player.png",
+        "pipe_up": "images/pipe_up.png",
+        "pipe_down": "images/pipe_down.png",
         "bg_color": (113, 197, 207),
         "text_color": (0, 0, 0),
-        "highlight_color": (255, 215, 0),
-        "accent_color": (255, 165, 0),
-        "filter": None
+        "highlight_color": (255, 215, 0)
     },
     "Night": {
-        "bg_color": (15, 15, 35),
-        "text_color": (220, 230, 255),
-        "highlight_color": (100, 150, 255),
-        "accent_color": (50, 100, 200),
-        "filter": apply_night_filter
+        "background": "images/background_night.png",
+        "ground": "images/ground_night.png",
+        "player": "images/player_night.png",
+        "pipe_up": "images/pipe_up_night.png",
+        "pipe_down": "images/pipe_down_night.png",
+        "bg_color": (20, 20, 40),
+        "text_color": (220, 220, 220),
+        "highlight_color": (100, 150, 255)
     },
     "Desert": {
-        "bg_color": (245, 210, 150),
+        "background": "images/background_desert.png",
+        "ground": "images/ground_desert.png",
+        "player": "images/player_desert.png",
+        "pipe_up": "images/pipe_up_desert.png",
+        "pipe_down": "images/pipe_down_desert.png",
+        "bg_color": (235, 200, 140),
         "text_color": (80, 40, 0),
-        "highlight_color": (255, 140, 0),
-        "accent_color": (200, 100, 50),
-        "filter": apply_desert_filter
-    },
-    "Retro": {
-        "bg_color": (30, 50, 30),
-        "text_color": (100, 255, 100),
-        "highlight_color": (150, 255, 150),
-        "accent_color": (50, 200, 50),
-        "filter": apply_retro_filter
-    },
-    "Neon": {
-        "bg_color": (10, 5, 25),
-        "text_color": (255, 100, 255),
-        "highlight_color": (0, 255, 255),
-        "accent_color": (255, 0, 255),
-        "filter": apply_neon_filter
-    },
-    "Vintage": {
-        "bg_color": (200, 180, 140),
-        "text_color": (60, 40, 20),
-        "highlight_color": (180, 120, 60),
-        "accent_color": (150, 100, 50),
-        "filter": apply_vintage_filter
-    },
-    "Mono": {
-        "bg_color": (80, 80, 80),
-        "text_color": (255, 255, 255),
-        "highlight_color": (200, 200, 200),
-        "accent_color": (150, 150, 150),
-        "filter": apply_monochrome_filter
+        "highlight_color": (255, 100, 0)
     }
 }
 
-current_theme = "Classic"
+current_theme = "Classic"  # Standard-Theme
 
-# Basis-Bildpfade
-base_images = {
-    "background": "images/background.png",
-    "ground": "images/ground.png",
-    "player": "images/player.png",
-    "pipe_up": "images/pipe_up.png",
-    "pipe_down": "images/pipe_down.png"
-}
 
-# Initialize Firebase settings
+# Einstellungen laden
+def load_settings():
+    global current_theme, current_difficulty_preset, fullscreen, HighScore
+    try:
+        with open(resource_path("settings.json"), "r") as f:
+            settings = json.load(f)
+            current_theme = settings.get("theme", "Classic")
+            current_difficulty_preset = settings.get("difficulty", "Normal")
+            fullscreen = settings.get("fullscreen", False)
+            HighScore = settings.get("highscore", 0)
+    except (FileNotFoundError, json.JSONDecodeError):
+        # Standardwerte verwenden, falls Datei nicht existiert
+        pass
+
+
+# Einstellungen speichern
+def save_settings():
+    settings = {
+        "theme": current_theme,
+        "difficulty": current_difficulty_preset,
+        "fullscreen": fullscreen,
+        "highscore": HighScore
+    }
+    with open(resource_path("settings.json"), "w") as f:
+        json.dump(settings, f)
+
+
+# Einstellungen laden
 load_settings()
 
-# Check network connectivity on startup (not in main loop!)
-try:
-    requests.get("https://www.google.com", timeout=3)
-    print("Network available - Firebase sync enabled")
-    sync_status_cache["status"] = "connected"
-except:
-    print("No network - using local storage only")
-    sync_status_cache["status"] = "offline"
-
-# Window Setup - KORRIGIERT auf 800x600
+# Window Setup
 if fullscreen:
     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     window_w, window_h = screen.get_size()
@@ -1002,7 +168,7 @@ if fullscreen:
     game_area.x = (window_w - GAME_WIDTH) // 2
     game_area.y = (window_h - GAME_HEIGHT) // 2
 else:
-    window_w, window_h = 800, 600  # KORRIGIERTE Fenstergröße
+    window_w, window_h = 1600, 600  # Größeres Fenster
     screen = pygame.display.set_mode((window_w, window_h))
     # Zentriere das Spielbereich
     game_area.x = (window_w - GAME_WIDTH) // 2
@@ -1019,60 +185,48 @@ try:
     icon = pygame.image.load(icon_data)
     pygame.display.set_icon(icon)
 except:
+    # Fallback, falls Icon nicht geladen werden kann
     pass
 
 clock = pygame.time.Clock()
 fps = 60
 
-# Load Fonts
+# Load Fonts mit resource_path
 font = pygame.font.Font(resource_path("fonts/BaiJamjuree-Bold.ttf"), 80)
-font_large = pygame.font.Font(resource_path("fonts/BaiJamjuree-Bold.ttf"), 64)
 font_small = pygame.font.Font(resource_path("fonts/BaiJamjuree-Bold.ttf"), 32)
-font_medium = pygame.font.Font(resource_path("fonts/BaiJamjuree-Bold.ttf"), 48)
+font_medium = pygame.font.Font(resource_path("fonts/BaiJamjuree-Bold.ttf"), 50)
 font_tiny = pygame.font.Font(resource_path("fonts/BaiJamjuree-Bold.ttf"), 24)
 
-# Load Sounds
+# Load Sounds mit resource_path
 slap_sfx = pygame.mixer.Sound(resource_path("sounds/slap.wav"))
 woosh_sfx = pygame.mixer.Sound(resource_path("sounds/woosh.wav"))
 score_sfx = pygame.mixer.Sound(resource_path("sounds/score.wav"))
 select_sfx = pygame.mixer.Sound(resource_path("sounds/select.wav"))
 
-# Basis-Bilder laden
-base_loaded_images = {}
-for key, path in base_images.items():
-    base_loaded_images[key] = pygame.image.load(resource_path(path)).convert_alpha()
 
-
-# Theme-basierte Bilder UND Masken laden mit Filtern (OPTIMIZED with caching)
+# Theme-basierte Bilder laden
 def load_theme_images(theme_name):
     theme = themes[theme_name]
-    filter_func = theme["filter"]
-
-    images = {}
-    masks = {}
-
-    for key, base_image in base_loaded_images.items():
-        cache_key = f"{theme_name}_{key}"
-
-        # Use cached version if available
-        filtered_image = get_cached_filtered_image(base_image, filter_func, cache_key)
-        images[key] = filtered_image
-        masks[f"{key}_mask"] = pygame.mask.from_surface(filtered_image)
-
-    return images, masks
+    return {
+        "player_img": pygame.image.load(resource_path(theme["player"])),
+        "pipe_up_img": pygame.image.load(resource_path(theme["pipe_up"])),
+        "pipe_down_img": pygame.image.load(resource_path(theme["pipe_down"])),
+        "ground_img": pygame.image.load(resource_path(theme["ground"])),
+        "bg_img": pygame.image.load(resource_path(theme["background"]))
+    }
 
 
-# Initiale Bilder und Masken laden
-theme_images, theme_masks = load_theme_images(current_theme)
-player_img = theme_images["player"]
-pipe_up_img = theme_images["pipe_up"]
-pipe_down_img = theme_images["pipe_down"]
-ground_img = theme_images["ground"]
-bg_img = theme_images["background"]
+# Initiale Bilder laden
+theme_images = load_theme_images(current_theme)
+player_img = theme_images["player_img"]
+pipe_up_img = theme_images["pipe_up_img"]
+pipe_down_img = theme_images["pipe_down_img"]
+ground_img = theme_images["ground_img"]
+bg_img = theme_images["bg_img"]
 
-# Masken für die Rohre (jetzt theme-spezifisch)
-pipe_up_mask = theme_masks["pipe_up_mask"]
-pipe_down_mask = theme_masks["pipe_down_mask"]
+# Erstelle Masken für die Rohre
+pipe_up_mask = pygame.mask.from_surface(pipe_up_img)
+pipe_down_mask = pygame.mask.from_surface(pipe_down_img)
 
 bg_width = bg_img.get_width()
 
@@ -1081,11 +235,39 @@ bg_scroll_spd = 1
 ground_scroll_spd = 2
 
 
+# Button-Klassen für bessere Mausinteraktion
+class Button:
+    def __init__(self, x, y, width, height, text, font, color, hover_color):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.text = text
+        self.font = font
+        self.color = color
+        self.hover_color = hover_color
+        self.is_hovered = False
+
+    def draw(self, surface):
+        color = self.hover_color if self.is_hovered else self.color
+        pygame.draw.rect(surface, color, self.rect, border_radius=10)
+        text_surface = self.font.render(self.text, True, (0, 0, 0))
+        text_rect = text_surface.get_rect(center=self.rect.center)
+        surface.blit(text_surface, text_rect)
+
+    def check_hover(self, pos):
+        self.is_hovered = self.rect.collidepoint(pos)
+        return self.is_hovered
+
+    def check_click(self, pos, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            return self.rect.collidepoint(pos)
+        return False
+
+
 class Player:
     def __init__(self, x, y):
         self.x = x
         self.y = y
         self.velocity = 0
+        # visuelle Attribute
         self.rotated_image = player_img
         self.rect = self.rotated_image.get_rect(topleft=(self.x, self.y))
         self.mask = pygame.mask.from_surface(self.rotated_image)
@@ -1094,9 +276,11 @@ class Player:
         self.velocity = -10
 
     def update(self):
+        # dt muss pro Frame gesetzt werden (siehe weiter unten)
         self.velocity += 0.75 * dt * 60
         self.y += self.velocity * dt * 60
 
+        # Begrenze den Spieler auf den Spielbereich
         if self.y < 0:
             self.y = 0
             self.velocity = 0
@@ -1104,18 +288,24 @@ class Player:
             self.y = ACTUAL_PLAY_HEIGHT - player_img.get_height()
             self.velocity = 0
 
+        # Winkel abhängig von Geschwindigkeit
         angle = max(-30, min(30, -self.velocity * 3))
         self.rotated_image = pygame.transform.rotate(player_img, angle)
+
+        # Aktualisiere die Maske basierend auf dem rotierten Bild
         self.mask = pygame.mask.from_surface(self.rotated_image)
 
+        # Rotation um das Zentrum: rect zentrieren
         center_x = self.x + player_img.get_width() // 2
         center_y = self.y + player_img.get_height() // 2
         self.rect = self.rotated_image.get_rect(center=(center_x, center_y))
 
     def draw(self):
+        # Stelle sicher, dass der Spieler nur im Spielbereich gezeichnet wird
         draw_x = game_area.x + self.rect.x
         draw_y = game_area.y + self.rect.y
 
+        # Überprüfe, ob der Spieler im sichtbaren Bereich ist
         if (draw_x + self.rotated_image.get_width() > game_area.x and
                 draw_x < game_area.x + GAME_WIDTH and
                 draw_y + self.rotated_image.get_height() > game_area.y and
@@ -1134,268 +324,248 @@ def scoreboard():
 
 
 def draw_death_screen():
-    """Modernes Game Over Menü - nutzt VOLLBILD (800x600)"""
-    # Halbtransparenter Overlay
+    # Halbtransparenten Overlay zeichnen
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 150))
+    overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
-    # Hauptkarte zentriert
-    card_rect = pygame.Rect(window_w // 2 - 200, window_h // 2 - 150, 400, 300)
-    draw_card(screen, card_rect, None, None, themes[current_theme])
+    # Texte für den Death Screen
+    game_over_text = font_medium.render("GAME OVER", True, themes[current_theme]["highlight_color"])
+    score_text = font_small.render(f"Score: {score}", True, themes[current_theme]["text_color"])
+    highscore_text = font_small.render(f"High Score: {HighScore}", True, themes[current_theme]["text_color"])
+    restart_text = font_small.render("Click to play again", True, themes[current_theme]["text_color"])
+    menu_text = font_small.render("Press B for main menu", True, themes[current_theme]["text_color"])
 
-    # Game Over Titel
-    title_text = font_large.render("GAME OVER", True, themes[current_theme]["highlight_color"])
-    title_rect = title_text.get_rect(center=(window_w // 2, window_h // 2 - 80))
-    screen.blit(title_text, title_rect)
-
-    # Score Anzeige
-    score_text = font_medium.render(f"Score: {score}", True, themes[current_theme]["text_color"])
-    score_rect = score_text.get_rect(center=(window_w // 2, window_h // 2 - 20))
-    screen.blit(score_text, score_rect)
-
-    # High Score mit New Record Indikator
-    is_new_record = score >= HighScore and score > 0
-    if is_new_record:
-        hs_text = font_small.render(f"NEW RECORD: {HighScore}!", True, (255, 100, 100))
-    else:
-        hs_text = font_small.render(f"Best: {HighScore}", True, themes[current_theme]["text_color"])
-    hs_rect = hs_text.get_rect(center=(window_w // 2, window_h // 2 + 20))
-    screen.blit(hs_text, hs_rect)
-
-    # Moderne Buttons
-    restart_rect = pygame.Rect(window_w // 2 - 160, window_h // 2 + 70, 150, 45)
-    menu_rect = pygame.Rect(window_w // 2 + 10, window_h // 2 + 70, 150, 45)
-
-    draw_modern_button(screen, restart_rect, "PLAY AGAIN", font_tiny, themes[current_theme]["highlight_color"])
-    draw_modern_button(screen, menu_rect, "MAIN MENU", font_tiny, themes[current_theme]["accent_color"])
-
-    # Instruktionen
-    instruction_text = font_tiny.render("Click buttons, SPACE to restart, B for menu", True,
-                                        themes[current_theme]["text_color"])
-    instruction_rect = instruction_text.get_rect(center=(window_w // 2, window_h // 2 + 140))
-    screen.blit(instruction_text, instruction_rect)
-
-    return restart_rect, menu_rect
+    # Texte zentrieren
+    screen.blit(game_over_text, (window_w // 2 - game_over_text.get_width() // 2, window_h // 2 - 100))
+    screen.blit(score_text, (window_w // 2 - score_text.get_width() // 2, window_h // 2 - 20))
+    screen.blit(highscore_text, (window_w // 2 - highscore_text.get_width() // 2, window_h // 2 + 20))
+    screen.blit(restart_text, (window_w // 2 - restart_text.get_width() // 2, window_h // 2 + 70))
+    screen.blit(menu_text, (window_w // 2 - menu_text.get_width() // 2, window_h // 2 + 120))
 
 
 def draw_main_menu():
-    """Modernes Hauptmenü - nutzt VOLLBILD (800x600)"""
-    # Hintergrund-Overlay
+    # Halbtransparenten Overlay zeichnen
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 120))
+    overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
-    # Titel
-    title_text = font_large.render("FLAPPY BIRD", True, themes[current_theme]["highlight_color"])
-    title_rect = title_text.get_rect(center=(window_w // 2, 100))
-    screen.blit(title_text, title_rect)
+    # Texte für das Hauptmenü
+    title_text = font_medium.render("FLAPPY BIRD", True, themes[current_theme]["highlight_color"])
+    start_text = font_small.render("Click to start", True, themes[current_theme]["text_color"])
+    settings_text = font_small.render("Press S for settings", True, themes[current_theme]["text_color"])
+    highscore_text = font_small.render(f"High Score: {HighScore}", True, themes[current_theme]["text_color"])
 
-    # Hauptbuttons zentriert
-    button_width = 250
-    button_height = 50
-    button_spacing = 20
-    start_y = window_h // 2 - 50
-
-    buttons = [
-        ("START GAME", themes[current_theme]["highlight_color"]),
-        ("SETTINGS", themes[current_theme]["accent_color"]),
-        ("THEMES", tuple(max(0, c - 30) for c in themes[current_theme]["highlight_color"]))
-    ]
-
-    button_rects = []
-    for i, (text, color) in enumerate(buttons):
-        button_rect = pygame.Rect(window_w // 2 - button_width // 2, start_y + i * (button_height + button_spacing),
-                                  button_width, button_height)
-        draw_modern_button(screen, button_rect, text, font_small, color)
-        button_rects.append(button_rect)
-
-    # High Score Anzeige
+    # Upload-Text, wenn ein Highscore vorhanden ist
+    upload_prompt = None
     if HighScore > 0:
-        hs_card = pygame.Rect(window_w // 2 - 150, start_y + len(buttons) * (button_height + button_spacing) + 30, 300,
-                              60)
-        draw_card(screen, hs_card, None, None, themes[current_theme])
+        upload_prompt = font_small.render("Press U to upload your score", True, (0, 255, 0))
 
-        highscore_text = font_small.render(f"Best Score: {HighScore}", True, themes[current_theme]["text_color"])
-        hs_rect = highscore_text.get_rect(center=hs_card.center)
-        screen.blit(highscore_text, hs_rect)
-
-        # Upload-Option
-        upload_text = font_tiny.render("Press U to upload score", True, themes[current_theme]["text_color"])
-        upload_rect = upload_text.get_rect(center=(window_w // 2, hs_card.bottom + 20))
-        screen.blit(upload_text, upload_rect)
-
-    # Upload-Status
+    # Upload-Status anzeigen, falls vorhanden
+    status_text = None
     if upload_status:
-        status_card = pygame.Rect(window_w // 2 - 200, window_h - 80, 400, 40)
-        draw_card(screen, status_card, None, None, themes[current_theme])
-        status_text = font_tiny.render(upload_status, True, themes[current_theme]["text_color"])
-        status_rect = status_text.get_rect(center=status_card.center)
-        screen.blit(status_text, status_rect)
+        status_text = font_small.render(upload_status, True, (255, 255, 0))
 
-    return button_rects
+    # Texte zentrieren
+    screen.blit(title_text, (window_w // 2 - title_text.get_width() // 2, window_h // 2 - 100))
+    screen.blit(start_text, (window_w // 2 - start_text.get_width() // 2, window_h // 2))
+    screen.blit(settings_text, (window_w // 2 - settings_text.get_width() // 2, window_h // 2 + 50))
+    screen.blit(highscore_text, (window_w // 2 - highscore_text.get_width() // 2, window_h // 2 + 100))
+
+    if upload_prompt:
+        screen.blit(upload_prompt, (window_w // 2 - upload_prompt.get_width() // 2, window_h // 2 + 150))
+
+    if status_text:
+        screen.blit(status_text, (window_w // 2 - status_text.get_width() // 2, window_h // 2 + 200))
 
 
 def draw_pause_screen():
-    """Modernes Pause Menü"""
+    # Halbtransparenten Overlay zeichnen
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 150))
+    overlay.fill((0, 0, 0, 180))
     screen.blit(overlay, (0, 0))
 
-    # Pause Karte
-    card_rect = pygame.Rect(window_w // 2 - 150, window_h // 2 - 100, 300, 200)
-    draw_card(screen, card_rect, None, None, themes[current_theme])
+    # Texte für den Pause Screen
+    pause_text = font_medium.render("PAUSED", True, themes[current_theme]["highlight_color"])
+    continue_text = font_small.render("Click to continue", True, themes[current_theme]["text_color"])
+    menu_text = font_small.render("Press B for main menu", True, themes[current_theme]["text_color"])
 
-    # Pause Text
-    pause_text = font_large.render("PAUSED", True, themes[current_theme]["highlight_color"])
-    pause_rect = pause_text.get_rect(center=(window_w // 2, window_h // 2 - 40))
-    screen.blit(pause_text, pause_rect)
+    # Texte zentrieren
+    screen.blit(pause_text, (window_w // 2 - pause_text.get_width() // 2, window_h // 2 - 50))
+    screen.blit(continue_text, (window_w // 2 - continue_text.get_width() // 2, window_h // 2 + 20))
+    screen.blit(menu_text, (window_w // 2 - menu_text.get_width() // 2, window_h // 2 + 70))
 
-    # Buttons
-    continue_rect = pygame.Rect(window_w // 2 - 100, window_h // 2 + 10, 200, 40)
-    menu_rect = pygame.Rect(window_w // 2 - 100, window_h // 2 + 60, 200, 40)
 
-    draw_modern_button(screen, continue_rect, "CONTINUE", font_tiny, themes[current_theme]["highlight_color"])
-    draw_modern_button(screen, menu_rect, "MAIN MENU", font_tiny, themes[current_theme]["accent_color"])
+def draw_start_screen():
+    # Hintergrund mit leichtem Overlay
+    overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 100))
+    screen.blit(overlay, (0, 0))
 
-    return continue_rect, menu_rect
+    # Titel
+    title_text = font_medium.render("FLAPPY BIRD", True, themes[current_theme]["highlight_color"])
+    screen.blit(title_text, (window_w // 2 - title_text.get_width() // 2, window_h // 4))
+
+    # Start-Button
+    start_button = pygame.Rect(window_w // 2 - 150, window_h // 2, 300, 60)
+    pygame.draw.rect(screen, themes[current_theme]["highlight_color"], start_button, border_radius=15)
+    start_text = font_small.render("START GAME", True, (0, 0, 0))
+    screen.blit(start_text, (window_w // 2 - start_text.get_width() // 2, window_h // 2 + 15))
+
+    # Einstellungs-Button
+    settings_button = pygame.Rect(window_w // 2 - 150, window_h // 2 + 80, 300, 60)
+    pygame.draw.rect(screen, themes[current_theme]["highlight_color"], settings_button, border_radius=15)
+    settings_text = font_small.render("SETTINGS", True, (0, 0, 0))
+    screen.blit(settings_text, (window_w // 2 - settings_text.get_width() // 2, window_h // 2 + 95))
+
+    # Theme-Button
+    theme_button = pygame.Rect(window_w // 2 - 150, window_h // 2 + 160, 300, 60)
+    pygame.draw.rect(screen, themes[current_theme]["highlight_color"], theme_button, border_radius=15)
+    theme_text = font_small.render("THEMES", True, (0, 0, 0))
+    screen.blit(theme_text, (window_w // 2 - theme_text.get_width() // 2, window_h // 2 + 175))
+
+    # Copyright-Text
+    copyright_text = font_tiny.render("© 2023 Flappy Bird", True, themes[current_theme]["text_color"])
+    screen.blit(copyright_text, (window_w // 2 - copyright_text.get_width() // 2, window_h - 50))
+
+    return start_button, settings_button, theme_button
 
 
 def draw_settings_screen():
-    """Modernes Einstellungsmenü - nutzt VOLLBILD"""
+    # Halbtransparenten Overlay zeichnen
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 150))
+    overlay.fill((0, 0, 0, 200))
     screen.blit(overlay, (0, 0))
 
     # Titel
-    title_text = font_large.render("SETTINGS", True, themes[current_theme]["highlight_color"])
-    title_rect = title_text.get_rect(center=(window_w // 2, 50))
-    screen.blit(title_text, title_rect)
+    title_text = font_medium.render("SETTINGS", True, themes[current_theme]["highlight_color"])
+    screen.blit(title_text, (window_w // 2 - title_text.get_width() // 2, 100))
+
+    # Schwierigkeitsauswahl
+    diff_text = font_small.render("Difficulty:", True, themes[current_theme]["text_color"])
+    screen.blit(diff_text, (window_w // 2 - 200, 200))
+
+    # Vollbildmodus
+    fullscreen_text = font_small.render("Fullscreen:", True, themes[current_theme]["text_color"])
+    screen.blit(fullscreen_text, (window_w // 2 - 200, 280))
 
     # Zurück-Button
-    back_button = pygame.Rect(50, 30, 120, 40)
-    draw_modern_button(screen, back_button, "← BACK", font_tiny, themes[current_theme]["accent_color"])
+    back_button = pygame.Rect(50, 50, 150, 50)
+    pygame.draw.rect(screen, themes[current_theme]["highlight_color"], back_button, border_radius=10)
+    back_text = font_small.render("BACK", True, (0, 0, 0))
+    screen.blit(back_text, (50 + 75 - back_text.get_width() // 2, 50 + 25 - back_text.get_height() // 2))
 
-    # Einstellungskarten
-    card_y = 120
-    card_height = 120
-    card_spacing = 20
+    # Schwierigkeits-Buttons
+    normal_button = pygame.Rect(window_w // 2 + 50, 190, 150, 40)
+    hard_button = pygame.Rect(window_w // 2 + 210, 190, 150, 40)
+    hardcore_button = pygame.Rect(window_w // 2 + 370, 190, 150, 40)
 
-    # Difficulty Card
-    diff_card = pygame.Rect(50, card_y, window_w - 100, card_height)
-    draw_card(screen, diff_card, "Difficulty", None, themes[current_theme])
+    # Farben für aktive/inaktive Buttons
+    normal_color = themes[current_theme]["highlight_color"] if current_difficulty_preset == "Normal" else (100, 100,
+                                                                                                           100)
+    hard_color = themes[current_theme]["highlight_color"] if current_difficulty_preset == "Schwer" else (100, 100, 100)
+    hardcore_color = themes[current_theme]["highlight_color"] if current_difficulty_preset == "Hardcore" else (100, 100,
+                                                                                                               100)
 
-    diff_label = font_small.render("Difficulty:", True, themes[current_theme]["text_color"])
-    screen.blit(diff_label, (70, card_y + 20))
+    pygame.draw.rect(screen, normal_color, normal_button, border_radius=10)
+    pygame.draw.rect(screen, hard_color, hard_button, border_radius=10)
+    pygame.draw.rect(screen, hardcore_color, hardcore_button, border_radius=10)
 
-    # Difficulty Buttons
-    diff_buttons = []
-    difficulties = [("NORMAL", "Normal"), ("HARD", "Schwer"), ("HARDCORE", "Hardcore")]
-    for i, (display, value) in enumerate(difficulties):
-        btn_rect = pygame.Rect(70 + i * 150, card_y + 60, 140, 35)
-        color = themes[current_theme]["highlight_color"] if current_difficulty_preset == value else (100, 100, 100)
-        draw_modern_button(screen, btn_rect, display, font_tiny, color)
-        diff_buttons.append((btn_rect, value))
+    normal_text = font_tiny.render("NORMAL", True, (255, 255, 255))
+    hard_text = font_tiny.render("HARD", True, (255, 255, 255))
+    hardcore_text = font_tiny.render("HARDCORE", True, (255, 255, 255))
 
-    # Fullscreen Card
-    fs_card = pygame.Rect(50, card_y + card_height + card_spacing, window_w - 100, card_height)
-    draw_card(screen, fs_card, "Display", None, themes[current_theme])
+    screen.blit(normal_text,
+                (window_w // 2 + 50 + 75 - normal_text.get_width() // 2, 190 + 20 - normal_text.get_height() // 2))
+    screen.blit(hard_text,
+                (window_w // 2 + 210 + 75 - hard_text.get_width() // 2, 190 + 20 - hard_text.get_height() // 2))
+    screen.blit(hardcore_text,
+                (window_w // 2 + 370 + 75 - hardcore_text.get_width() // 2, 190 + 20 - hardcore_text.get_height() // 2))
 
-    fs_label = font_small.render("Fullscreen:", True, themes[current_theme]["text_color"])
-    screen.blit(fs_label, (70, fs_card.y + 20))
+    # Vollbildmodus-Button
+    fullscreen_button = pygame.Rect(window_w // 2 + 50, 270, 150, 40)
+    fullscreen_color = themes[current_theme]["highlight_color"] if fullscreen else (100, 100, 100)
+    pygame.draw.rect(screen, fullscreen_color, fullscreen_button, border_radius=10)
+    fullscreen_btn_text = font_tiny.render("ON" if fullscreen else "OFF", True, (255, 255, 255))
+    screen.blit(fullscreen_btn_text, (window_w // 2 + 50 + 75 - fullscreen_btn_text.get_width() // 2,
+                                      270 + 20 - fullscreen_btn_text.get_height() // 2))
 
-    fs_button = pygame.Rect(70, fs_card.y + 60, 140, 35)
-    fs_color = themes[current_theme]["highlight_color"] if fullscreen else (100, 100, 100)
-    draw_modern_button(screen, fs_button, "ON" if fullscreen else "OFF", font_tiny, fs_color)
-
-    # Themes Card
-    theme_card_y = fs_card.y + card_height + card_spacing
-    theme_card = pygame.Rect(50, theme_card_y, window_w - 100, 180)
-    draw_card(screen, theme_card, "Themes", None, themes[current_theme])
-
-    theme_label = font_small.render("Theme:", True, themes[current_theme]["text_color"])
-    screen.blit(theme_label, (70, theme_card_y + 20))
-
-    # Theme Buttons Grid
-    theme_buttons = []
-    theme_names = list(themes.keys())
-    themes_per_row = 4
-    for i, theme_name in enumerate(theme_names):
-        row = i // themes_per_row
-        col = i % themes_per_row
-        btn_x = 70 + col * 160
-        btn_y = theme_card_y + 60 + row * 45
-        btn_rect = pygame.Rect(btn_x, btn_y, 150, 35)
-
-        color = themes[current_theme]["highlight_color"] if current_theme == theme_name else (80, 80, 80)
-        draw_modern_button(screen, btn_rect, theme_name, font_tiny, color)
-        theme_buttons.append((btn_rect, theme_name))
-
-    return back_button, diff_buttons, fs_button, theme_buttons
+    return back_button, normal_button, hard_button, hardcore_button, fullscreen_button
 
 
 def draw_theme_selection():
-    """Modernes Theme-Auswahl Menü"""
+    # Halbtransparenten Overlay zeichnen
     overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 150))
+    overlay.fill((0, 0, 0, 200))
     screen.blit(overlay, (0, 0))
 
     # Titel
-    title_text = font_large.render("SELECT THEME", True, themes[current_theme]["highlight_color"])
-    title_rect = title_text.get_rect(center=(window_w // 2, 50))
-    screen.blit(title_text, title_rect)
+    title_text = font_medium.render("SELECT THEME", True, themes[current_theme]["highlight_color"])
+    screen.blit(title_text, (window_w // 2 - title_text.get_width() // 2, 100))
 
     # Zurück-Button
-    back_button = pygame.Rect(50, 30, 120, 40)
-    draw_modern_button(screen, back_button, "← BACK", font_tiny, themes[current_theme]["accent_color"])
+    back_button = pygame.Rect(50, 50, 150, 50)
+    pygame.draw.rect(screen, themes[current_theme]["highlight_color"], back_button, border_radius=10)
+    back_text = font_small.render("BACK", True, (0, 0, 0))
+    screen.blit(back_text, (50 + 75 - back_text.get_width() // 2, 50 + 25 - back_text.get_height() // 2))
 
-    # Theme-Grid
+    # Theme-Buttons
     theme_buttons = {}
+    theme_previews = {}
     theme_names = list(themes.keys())
-    themes_per_row = 3
 
     for i, theme_name in enumerate(theme_names):
-        row = i // themes_per_row
-        col = i % themes_per_row
-        x_pos = window_w // 2 - 300 + col * 200
-        y_pos = 120 + row * 120
+        # Button position
+        x_pos = window_w // 2 - 200 + (i % 3) * 200
+        y_pos = 200 + (i // 3) * 200
 
-        # Theme-Vorschau Karte
-        preview_rect = pygame.Rect(x_pos, y_pos, 180, 80)
-        pygame.draw.rect(screen, themes[theme_name]["bg_color"], preview_rect, border_radius=8)
-        pygame.draw.rect(screen, themes[theme_name]["highlight_color"], preview_rect, 2, border_radius=8)
+        # Theme-Vorschau
+        preview_rect = pygame.Rect(x_pos, y_pos, 180, 150)
+        pygame.draw.rect(screen, themes[theme_name]["bg_color"], preview_rect)
 
-        # Theme-Name Button
-        name_rect = pygame.Rect(x_pos, y_pos + 90, 180, 30)
-        color = themes[current_theme]["highlight_color"] if current_theme == theme_name else themes[theme_name][
-            "accent_color"]
-        draw_modern_button(screen, name_rect, theme_name, font_tiny, color)
+        # Theme-Name
+        name_text = font_tiny.render(theme_name, True, themes[theme_name]["text_color"])
+        screen.blit(name_text, (x_pos + 90 - name_text.get_width() // 2, y_pos + 160))
 
-        theme_buttons[theme_name] = pygame.Rect(x_pos, y_pos, 180, 120)
+        # Auswahlindikator
+        if theme_name == current_theme:
+            pygame.draw.rect(screen, themes[theme_name]["highlight_color"], preview_rect, 4)
+
+        theme_buttons[theme_name] = preview_rect
+        theme_previews[theme_name] = preview_rect
 
     return back_button, theme_buttons
 
 
 def show_password_dialog():
+    # Tkinter Passwort-Eingabefenster erstellen
     root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
+    root.withdraw()  # Hauptfenster verstecken
+    root.attributes("-topmost", True)  # Immer im Vordergrund
+
+    # Passwort abfragen
     password = simpledialog.askstring("Admin Login", "Enter password:", show='*', parent=root)
+
     root.destroy()
-    return password == "nutzt-deins"
+    return password == "ndnet-asAdmin"
 
 
 def show_admin_editor():
+    # Tkinter Admin-Editor-Fenster erstellen
     root = tk.Tk()
     root.title("Admin Editor")
     root.geometry("500x600")
     root.resizable(False, False)
-    root.attributes("-topmost", True)
+    root.attributes("-topmost", True)  # Immer im Vordergrund
 
+    # Variablen für die Eingabefelder
     score_var = tk.StringVar(value=str(score))
     highscore_var = tk.StringVar(value=str(HighScore))
+
+    # Schwierigkeits-Preset Auswahl
     preset_var = tk.StringVar(value=current_difficulty_preset)
 
+    # Schwierigkeitsparameter Variablen
     preset = difficulty_presets[current_difficulty_preset]
     pipe_spacing_var = tk.StringVar(value=str(preset["pipe_spacing"]))
     difficulty_interval_var = tk.StringVar(value=str(preset["difficulty_increase_interval"]))
@@ -1405,6 +575,7 @@ def show_admin_editor():
     min_gap_var = tk.StringVar(value=str(preset["min_gap"]))
     min_spacing_var = tk.StringVar(value=str(preset["min_spacing"]))
 
+    # Funktion zum Aktualisieren der Parameter basierend auf dem ausgewählten Preset
     def update_preset_parameters(*args):
         preset_name = preset_var.get()
         if preset_name in difficulty_presets:
@@ -1417,10 +588,12 @@ def show_admin_editor():
             min_gap_var.set(str(preset["min_gap"]))
             min_spacing_var.set(str(preset["min_spacing"]))
 
+    # Funktion zum Speichern der Werte
     def save_values():
         global score, HighScore, current_difficulty_preset, difficulty_presets
 
         try:
+            # Score und Highscore speichern
             new_score = int(score_var.get())
             new_highscore = int(highscore_var.get())
 
@@ -1431,10 +604,12 @@ def show_admin_editor():
             score = new_score
             HighScore = new_highscore
 
+            # Schwierigkeits-Preset und Parameter speichern
             preset_name = preset_var.get()
             if preset_name in difficulty_presets:
                 current_difficulty_preset = preset_name
 
+                # Aktualisiere die Parameter des ausgewählten Presets
                 difficulty_presets[preset_name] = {
                     "pipe_spacing": int(pipe_spacing_var.get()),
                     "difficulty_increase_interval": int(difficulty_interval_var.get()),
@@ -1445,14 +620,15 @@ def show_admin_editor():
                     "min_spacing": int(min_spacing_var.get())
                 }
 
-            # Save to Firebase
-            save_settings_async()
             messagebox.showinfo("Success", "Values updated successfully!")
             root.destroy()
         except ValueError:
             messagebox.showerror("Error", "Please enter valid numbers!")
 
+    # Widgets erstellen
     row = 0
+
+    # Score und Highscore
     tk.Label(root, text="Score:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
     score_entry = tk.Entry(root, textvariable=score_var)
     score_entry.grid(row=row, column=1, padx=10, pady=5)
@@ -1463,15 +639,17 @@ def show_admin_editor():
     highscore_entry.grid(row=row, column=1, padx=10, pady=5)
     row += 1
 
-    tk.Label(root, text="Schwierigkeit").grid(row=row, column=0, columnspan=2,
-                                              pady=10)
+    # Trennlinie
+    tk.Label(root, text="────────────── Schwierigkeit ──────────────").grid(row=row, column=0, columnspan=2, pady=10)
     row += 1
 
+    # Schwierigkeits-Preset Auswahl
     tk.Label(root, text="Schwierigkeitsstufe:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
     preset_dropdown = tk.OptionMenu(root, preset_var, *difficulty_presets.keys(), command=update_preset_parameters)
     preset_dropdown.grid(row=row, column=1, padx=10, pady=5, sticky="w")
     row += 1
 
+    # Schwierigkeitsparameter
     tk.Label(root, text="Start-Rohrabstand:").grid(row=row, column=0, padx=10, pady=5, sticky="e")
     tk.Entry(root, textvariable=pipe_spacing_var).grid(row=row, column=1, padx=10, pady=5)
     row += 1
@@ -1500,18 +678,65 @@ def show_admin_editor():
     tk.Entry(root, textvariable=min_spacing_var).grid(row=row, column=1, padx=10, pady=5)
     row += 1
 
+    # Buttons
     save_btn = tk.Button(root, text="Save", command=save_values, width=10)
     save_btn.grid(row=row, column=0, columnspan=2, pady=20)
 
+    # Fokus auf das erste Eingabefeld setzen
     score_entry.focus_set()
+
+    # Enter-Taste zum Speichern binden
     root.bind('<Return>', lambda event: save_values())
 
+    # Fenster zentrieren
     root.update_idletasks()
     x = (root.winfo_screenwidth() // 2) - (root.winfo_width() // 2)
     y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
     root.geometry('+{}+{}'.format(x, y))
 
     root.mainloop()
+
+
+# Neue Funktion zum Hochladen des Highscores
+def upload_highscore(name):
+    global upload_status
+    try:
+        # URL zu deinem Server-Endpoint
+        url = "https://flappy-bird.nsce.fr/api/upload_score"
+        data = {
+            "name": name,
+            "score": HighScore
+        }
+        response = requests.post(url, json=data, timeout=10)
+
+        # Antwort verarbeiten
+        if response.status_code == 200:
+            result = response.json()
+            upload_status = result.get("message", "Erfolgreich hochgeladen!")
+        else:
+            upload_status = f"Fehler beim Hochladen: {response.status_code}"
+    except Exception as e:
+        upload_status = f"Verbindungsfehler: {str(e)}"
+
+
+# Neue Funktion für den Upload-Dialog
+def show_upload_dialog():
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    name = simpledialog.askstring("Highscore upload",
+                                  "Gib deinen Namen ein um deinen Highscore zu teilen:",
+                                  parent=root)
+    root.destroy()
+
+    if name and name.strip():
+        # Hochladen in einem separaten Thread, um das Spiel nicht zu blockieren
+        upload_thread = threading.Thread(target=upload_highscore, args=(name.strip(),))
+        upload_thread.daemon = True
+        upload_thread.start()
+        return True
+    return False
 
 
 class Pipe:
@@ -1521,6 +746,7 @@ class Pipe:
         self.gap = gap
         self.velocity = velocity
         self.scored = False
+        # Positionen für die Kollisionserkennung - auf Spielbereich beschränkt
         self.top_rect = pygame.Rect(
             max(0, min(self.x, GAME_WIDTH - pipe_down_img.get_width())),
             0 - pipe_down_img.get_height() + self.height,
@@ -1536,32 +762,44 @@ class Pipe:
 
     def update(self):
         self.x -= self.velocity
+        # Aktualisiere die Position der Rechtecke und begrenze sie auf den Spielbereich
         self.top_rect.x = max(0, min(self.x, GAME_WIDTH - pipe_down_img.get_width()))
         self.bottom_rect.x = max(0, min(self.x, GAME_WIDTH - pipe_up_img.get_width()))
 
     def draw(self):
+        # Zeichne nur, wenn die Rohre im Spielbereich sind
         if self.x + pipe_up_img.get_width() > 0 and self.x < GAME_WIDTH:
+            # Draw top pipe
             top_y = game_area.y + 0 - pipe_down_img.get_height() + self.height
             screen.blit(pipe_down_img, (game_area.x + self.x, top_y))
 
+            # Draw bottom pipe
             bottom_y = game_area.y + self.height + self.gap
             screen.blit(pipe_up_img, (game_area.x + self.x, bottom_y))
 
 
 def check_collision(player, pipes):
+    # Verbesserte Kollision mit Boden und Decke
+    # Kollision mit der Decke (oberer Spielfeldrand)
     if player.rect.top <= 0:
         return True
 
+    # Kollision mit dem Boden - präziser
+    # Der Vogel stirbt erst, wenn er wirklich den sichtbaren Boden berührt
     if player.rect.bottom >= ACTUAL_PLAY_HEIGHT:
         return True
 
+    # Kollision mit Rohren (Masken-basiert)
     for pipe in pipes:
+        # Nur prüfen, wenn das Rohr im Spielbereich ist
         if pipe.x + pipe_up_img.get_width() > 0 and pipe.x < GAME_WIDTH:
+            # Berechne den Offset zwischen Spieler und Rohr
             offset_top_x = pipe.top_rect.left - player.rect.left
             offset_top_y = pipe.top_rect.top - player.rect.top
             offset_bottom_x = pipe.bottom_rect.left - player.rect.left
             offset_bottom_y = pipe.bottom_rect.top - player.rect.top
 
+            # Überprüfe Kollision mit Masken
             if player.mask.overlap(pipe_down_mask, (offset_top_x, offset_top_y)):
                 return True
             if player.mask.overlap(pipe_up_mask, (offset_bottom_x, offset_bottom_y)):
@@ -1575,10 +813,12 @@ def update_difficulty():
 
     preset = difficulty_presets[current_difficulty_preset]
 
+    # Erhöhe Schwierigkeit alle X Punkte (abhängig vom Preset)
     if score >= last_difficulty_update + preset["difficulty_increase_interval"]:
         difficulty_level += 1
         last_difficulty_update = score
 
+    # Berechne aktuelle Werte basierend auf Schwierigkeitslevel und Preset
     current_velocity = base_pipe_velocity * (1 + preset["velocity_multiplier"] * difficulty_level)
     current_gap = max(preset["min_gap"], base_gap - (preset["gap_decrease"] * difficulty_level))
     current_spacing = max(preset["min_spacing"],
@@ -1595,14 +835,17 @@ def reset_game():
     difficulty_level = 0
     last_difficulty_update = 0
 
+    # Verwende pipe_spacing aus dem aktuellen Preset
     preset = difficulty_presets[current_difficulty_preset]
     pipe_spacing = preset["pipe_spacing"]
 
     player = Player(GAME_WIDTH // 4, GAME_HEIGHT // 2)
 
+    # Erstelle mehrere Rohre mit unterschiedlichen Abständen
     pipes = []
-    for i in range(3):
+    for i in range(3):  # 3 Rohre gleichzeitig
         x_pos = GAME_WIDTH + (i * pipe_spacing)
+        # Stelle sicher, dass die Rohre nicht zu nah am Boden oder der Decke sind
         min_height = 50
         max_height = ACTUAL_PLAY_HEIGHT - base_gap - 50
         random_height = random.randint(min_height, max_height)
@@ -1618,31 +861,30 @@ def toggle_fullscreen():
     if fullscreen:
         screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         window_w, window_h = screen.get_size()
+        # Zentriere das Spielbereich
         game_area.x = (window_w - GAME_WIDTH) // 2
         game_area.y = (window_h - GAME_HEIGHT) // 2
     else:
         window_w, window_h = 800, 600
         screen = pygame.display.set_mode((window_w, window_h))
+        # Zentriere das Spielbereich
         game_area.x = (window_w - GAME_WIDTH) // 2
         game_area.y = (window_h - GAME_HEIGHT) // 2
 
-    save_settings_async()
+    save_settings()
 
 
 def game():
     global game_state, HighScore, score, has_moved, window_focused, upload_status, dt
-    global player_img, pipe_up_img, pipe_down_img, ground_img, bg_img, current_theme, current_difficulty_preset
-    global pipe_up_mask, pipe_down_mask, theme_images, theme_masks
+    global player_img, pipe_up_img, pipe_down_img, ground_img, bg_img, current_theme, current_difficulty_preset, fullscreen
 
     bg_x_pos = 0
     ground_x_pos = 0
 
     player, pipes = reset_game()
 
-    # UI-Button-Variablen
-    main_menu_buttons = None
-    death_screen_buttons = None
-    pause_screen_buttons = None
+    # Variablen für die Buttons
+    start_screen_buttons = None
     settings_buttons = None
     theme_buttons = None
 
@@ -1650,142 +892,131 @@ def game():
         dt = clock.tick(fps) / 1000.0
         mouse_pos = pygame.mouse.get_pos()
 
+        # Aktuelle Schwierigkeit berechnen
         current_velocity, current_gap, current_spacing = update_difficulty()
 
+        # Event handling für alle Zustände
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
 
+            # Überprüfen, ob das Fenster den Fokus verliert oder erhält
             if event.type == pygame.ACTIVEEVENT:
-                if event.gain == 0:
+                if event.gain == 0:  # Fenster hat Fokus verloren
                     window_focused = False
-                    if game_state == 2:
+                    if game_state == 2:  # Nur pausieren, wenn im Spiel
                         game_state = 4
-                else:
+                else:  # Fenster hat Fokus zurückerhalten
                     window_focused = True
 
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_F12:
+                    # Passwort abfragen
                     if show_password_dialog():
                         show_admin_editor()
 
-                if game_state == 1:  # Hauptmenü
+                if game_state == 0:  # Start Screen
+                    if event.key == pygame.K_SPACE:
+                        game_state = 1  # Hauptmenü
+
+                elif game_state == 1:  # Hauptmenü
                     if event.key == pygame.K_SPACE:
                         player, pipes = reset_game()
-                        game_state = 2
-                    elif event.key == pygame.K_s:
+                        game_state = 2  # Spiel starten
+                    elif event.key == pygame.K_s:  # Einstellungen
                         game_state = 6
-                    elif event.key == pygame.K_t:
+                    elif event.key == pygame.K_t:  # Theme-Auswahl
                         game_state = 7
-                    elif event.key == pygame.K_u and HighScore > 0:
-                        if show_upload_dialog():  # VEREINFACHT: Direkt zur Code-Eingabe
-                            game_state = 5
+                    elif event.key == pygame.K_u and HighScore > 0:  # Upload mit U-Taste
+                        if show_upload_dialog():
+                            game_state = 5  # Upload-Bestätigungsbildschirm
 
                 elif game_state == 2:  # Spielzustand
                     has_moved = True
                     if event.key == pygame.K_SPACE:
                         pygame.mixer.Sound.play(woosh_sfx)
                         player.jump()
-                    if event.key == pygame.K_p:
+                    if event.key == pygame.K_p:  # Pause with P key
                         game_state = 4
-                    if event.key == pygame.K_ESCAPE or event.key == pygame.K_b:
+                    if event.key == pygame.K_ESCAPE:  # Zurück zum Hauptmenü
                         game_state = 1
 
                 elif game_state == 3:  # Death Screen
-                    if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                    if event.key == pygame.K_RETURN:
+                        # Spiel zurücksetzen
                         player, pipes = reset_game()
                         game_state = 2
-                    elif event.key == pygame.K_b:
+                    elif event.key == pygame.K_b:  # Zurück zum Hauptmenü
                         game_state = 1
 
                 elif game_state == 4:  # Pause Screen
                     if event.key == pygame.K_SPACE or event.key == pygame.K_p:
-                        game_state = 2
-                    elif event.key == pygame.K_b:
+                        game_state = 2  # Resume game
+                    elif event.key == pygame.K_b:  # Zurück zum Hauptmenü
                         game_state = 1
 
                 elif game_state == 5:  # Upload-Bestätigung
                     if event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
-                        game_state = 1
+                        game_state = 1  # Zurück zum Hauptmenü
 
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if game_state == 1 and main_menu_buttons:  # Hauptmenü
-                    start_rect, settings_rect, themes_rect = main_menu_buttons
-                    if start_rect.collidepoint(mouse_pos):
+                if game_state == 0 and start_screen_buttons is not None:  # Start Screen
+                    start_button, settings_button, theme_button = start_screen_buttons
+                    if start_button.collidepoint(mouse_pos):
                         pygame.mixer.Sound.play(select_sfx)
-                        player, pipes = reset_game()
-                        game_state = 2
-                        has_moved = True
-                    elif settings_rect.collidepoint(mouse_pos):
+                        game_state = 1
+                    elif settings_button.collidepoint(mouse_pos):
                         pygame.mixer.Sound.play(select_sfx)
                         game_state = 6
-                    elif themes_rect.collidepoint(mouse_pos):
+                    elif theme_button.collidepoint(mouse_pos):
                         pygame.mixer.Sound.play(select_sfx)
                         game_state = 7
 
+                elif game_state == 1:  # Hauptmenü
+                    # Klick irgendwo startet das Spiel
+                    player, pipes = reset_game()
+                    game_state = 2
+                    has_moved = True
+
                 elif game_state == 2:  # Spiel
+                    # Klick lässt den Vogel springen
                     pygame.mixer.Sound.play(woosh_sfx)
                     player.jump()
 
-                elif game_state == 3 and death_screen_buttons:  # Tod
-                    restart_rect, menu_rect = death_screen_buttons
-                    if restart_rect.collidepoint(mouse_pos):
-                        pygame.mixer.Sound.play(select_sfx)
-                        player, pipes = reset_game()
-                        game_state = 2
-                        has_moved = True
-                    elif menu_rect.collidepoint(mouse_pos):
-                        pygame.mixer.Sound.play(select_sfx)
-                        game_state = 1
+                elif game_state == 3:  # Tod
+                    # Klick startet das Spiel neu
+                    player, pipes = reset_game()
+                    game_state = 2
+                    has_moved = True
 
-                elif game_state == 4 and pause_screen_buttons:  # Pause
-                    continue_rect, menu_rect = pause_screen_buttons
-                    if continue_rect.collidepoint(mouse_pos):
-                        pygame.mixer.Sound.play(select_sfx)
-                        game_state = 2
-                    elif menu_rect.collidepoint(mouse_pos):
-                        pygame.mixer.Sound.play(select_sfx)
-                        game_state = 1
+                elif game_state == 4:  # Pause
+                    # Klick setzt das Spiel fort
+                    game_state = 2
 
-                elif game_state == 6 and settings_buttons:  # Einstellungen
-                    back_button, diff_buttons, fs_button, theme_buttons_list = settings_buttons
+                elif game_state == 6 and settings_buttons is not None:  # Einstellungen
+                    back_button, normal_button, hard_button, hardcore_button, fullscreen_button = settings_buttons
 
                     if back_button.collidepoint(mouse_pos):
                         pygame.mixer.Sound.play(select_sfx)
                         game_state = 1
-
-                    # Difficulty buttons
-                    for btn_rect, value in diff_buttons:
-                        if btn_rect.collidepoint(mouse_pos):
-                            pygame.mixer.Sound.play(select_sfx)
-                            change_difficulty(value)
-
-                    # Fullscreen button
-                    if fs_button.collidepoint(mouse_pos):
+                    elif normal_button.collidepoint(mouse_pos):
+                        pygame.mixer.Sound.play(select_sfx)
+                        current_difficulty_preset = "Normal"
+                        save_settings()
+                    elif hard_button.collidepoint(mouse_pos):
+                        pygame.mixer.Sound.play(select_sfx)
+                        current_difficulty_preset = "Schwer"
+                        save_settings()
+                    elif hardcore_button.collidepoint(mouse_pos):
+                        pygame.mixer.Sound.play(select_sfx)
+                        current_difficulty_preset = "Hardcore"
+                        save_settings()
+                    elif fullscreen_button.collidepoint(mouse_pos):
                         pygame.mixer.Sound.play(select_sfx)
                         toggle_fullscreen()
 
-                    # Theme buttons
-                    for btn_rect, theme_name in theme_buttons_list:
-                        if btn_rect.collidepoint(mouse_pos):
-                            pygame.mixer.Sound.play(select_sfx)
-                            change_theme(theme_name)
-                            # Clear cache when theme changes to prevent memory issues
-                            clear_filter_cache()
-                            # Theme-Bilder UND Masken mit Filter neu laden
-                            theme_images, theme_masks = load_theme_images(current_theme)
-                            player_img = theme_images["player"]
-                            pipe_up_img = theme_images["pipe_up"]
-                            pipe_down_img = theme_images["pipe_down"]
-                            ground_img = theme_images["ground"]
-                            bg_img = theme_images["background"]
-                            pipe_up_mask = theme_masks["pipe_up_mask"]
-                            pipe_down_mask = theme_masks["pipe_down_mask"]
-                            player.rotated_image = player_img
-                            player.mask = pygame.mask.from_surface(player_img)
-
-                elif game_state == 7 and theme_buttons:  # Theme-Auswahl
+                elif game_state == 7 and theme_buttons is not None:  # Theme-Auswahl
                     back_button, theme_buttons_dict = theme_buttons
 
                     if back_button.collidepoint(mouse_pos):
@@ -1795,39 +1026,42 @@ def game():
                         for theme_name, button_rect in theme_buttons_dict.items():
                             if button_rect.collidepoint(mouse_pos):
                                 pygame.mixer.Sound.play(select_sfx)
-                                change_theme(theme_name)
-                                # Clear cache when theme changes to prevent memory issues
-                                clear_filter_cache()
-                                # Theme-Bilder UND Masken mit Filter neu laden
-                                theme_images, theme_masks = load_theme_images(current_theme)
-                                player_img = theme_images["player"]
-                                pipe_up_img = theme_images["pipe_up"]
-                                pipe_down_img = theme_images["pipe_down"]
-                                ground_img = theme_images["ground"]
-                                bg_img = theme_images["background"]
-                                pipe_up_mask = theme_masks["pipe_up_mask"]
-                                pipe_down_mask = theme_masks["pipe_down_mask"]
+                                current_theme = theme_name
+                                # Theme-Bilder neu laden
+                                theme_images = load_theme_images(current_theme)
+                                player_img = theme_images["player_img"]
+                                pipe_up_img = theme_images["pipe_up_img"]
+                                pipe_down_img = theme_images["pipe_down_img"]
+                                ground_img = theme_images["ground_img"]
+                                bg_img = theme_images["bg_img"]
+                                # Spieler-Image aktualisieren
                                 player.rotated_image = player_img
                                 player.mask = pygame.mask.from_surface(player_img)
+                                save_settings()
                                 break
 
         # Spiel-Logik
         if game_state == 2 and has_moved:
             player.update()
 
+            # Kollisionserkennung mit Masken
             if check_collision(player, pipes):
                 if score > HighScore:
-                    update_high_score(score)  # Firebase sync
+                    HighScore = score
+                    save_settings()
                 pygame.mixer.Sound.play(slap_sfx)
                 game_state = 3
 
             for pipe in pipes:
-                pipe.velocity = current_velocity
+                pipe.velocity = current_velocity  # Aktualisiere Geschwindigkeit für alle Rohre
                 pipe.update()
 
+            # Entferne Rohre, die den Bildschirm verlassen haben
             if pipes and pipes[0].x < -pipe_up_img.get_width():
                 pipes.pop(0)
+                # Füge ein neues Rohr hinzu
                 last_pipe_x = pipes[-1].x if pipes else GAME_WIDTH
+                # Stelle sicher, dass die neuen Rohre korrekt positioniert sind
                 min_height = 50
                 max_height = ACTUAL_PLAY_HEIGHT - current_gap - 50
                 random_height = random.randint(min_height, max_height)
@@ -1849,54 +1083,56 @@ def game():
                 ground_x_pos = 0
 
         # Zeichnen
+        # Zeichne den Spielbereich-Hintergrund
         screen.fill(themes[current_theme]["bg_color"])
 
-        # Spielbereich-Rahmen (nur während Gameplay)
-        if game_state == 2:
-            pygame.draw.rect(screen, (50, 50, 50), game_area, 2)
+        # Zeichne einen Rahmen um den Spielbereich (optional, zur Verdeutlichung)
+        pygame.draw.rect(screen, (50, 50, 50), game_area, 2)
 
-        # Spielbereich-Inhalt (nur während Gameplay)
-        if game_state == 2:
-            screen.set_clip(game_area)
-            screen.blit(bg_img, (game_area.x + bg_x_pos, game_area.y))
-            screen.blit(bg_img, (game_area.x + bg_x_pos + bg_width, game_area.y))
-            screen.blit(ground_img, (game_area.x + ground_x_pos, game_area.y + ACTUAL_PLAY_HEIGHT))
-            screen.blit(ground_img, (game_area.x + ground_x_pos + bg_width, game_area.y + ACTUAL_PLAY_HEIGHT))
+        # Zeichne den Hintergrund im Spielbereich
+        # Clip-Bereich setzen, um sicherzustellen, dass nichts außerhalb gezeichnet wird
+        screen.set_clip(game_area)
 
+        screen.blit(bg_img, (game_area.x + bg_x_pos, game_area.y))
+        screen.blit(bg_img, (game_area.x + bg_x_pos + bg_width, game_area.y))
+
+        # Zeichne den Boden im Spielbereich
+        screen.blit(ground_img, (game_area.x + ground_x_pos, game_area.y + ACTUAL_PLAY_HEIGHT))
+        screen.blit(ground_img, (game_area.x + ground_x_pos + bg_width, game_area.y + ACTUAL_PLAY_HEIGHT))
+
+        if game_state >= 2:  # Don't draw pipes in menus
             for pipe in pipes:
                 pipe.draw()
+
+        if game_state == 2:  # Only draw player during gameplay
             player.draw()
 
-            screen.set_clip(None)
+        # Clip-Bereich zurücksetzen
+        screen.set_clip(None)
+
+        if game_state >= 2:  # Don't show scoreboard in menus
             scoreboard()
 
-        # Sync status indicator (OPTIMIZED - no network requests in main loop!)
-        draw_sync_status()
-
-        # Menü-Overlays (nutzen VOLLBILD)
-        if game_state == 1:
-            main_menu_buttons = draw_main_menu()
+        # Overlays zeichnen
+        if game_state == 0:
+            start_screen_buttons = draw_start_screen()
+        elif game_state == 1:
+            draw_main_menu()
         elif game_state == 3:
-            death_screen_buttons = draw_death_screen()
+            draw_death_screen()
         elif game_state == 4:
-            pause_screen_buttons = draw_pause_screen()
+            draw_pause_screen()
         elif game_state == 5:
-            # Upload-Bestätigung
+            # Upload-Bestätigungsbildschirm
             overlay = pygame.Surface((window_w, window_h), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 150))
+            overlay.fill((0, 0, 0, 180))
             screen.blit(overlay, (0, 0))
 
-            card_rect = pygame.Rect(window_w // 2 - 200, window_h // 2 - 50, 400, 100)
-            draw_card(screen, card_rect, None, None, themes[current_theme])
+            status = font_small.render(upload_status, True, themes[current_theme]["text_color"])
+            continue_text = font_small.render("Press SPACE to continue", True, themes[current_theme]["text_color"])
 
-            status_text = font_small.render(upload_status, True, themes[current_theme]["text_color"])
-            status_rect = status_text.get_rect(center=(window_w // 2, window_h // 2 - 10))
-            screen.blit(status_text, status_rect)
-
-            continue_text = font_tiny.render("Press SPACE to continue", True, themes[current_theme]["text_color"])
-            continue_rect = continue_text.get_rect(center=(window_w // 2, window_h // 2 + 20))
-            screen.blit(continue_text, continue_rect)
-
+            screen.blit(status, (window_w // 2 - status.get_width() // 2, window_h // 2 - 20))
+            screen.blit(continue_text, (window_w // 2 - continue_text.get_width() // 2, window_h // 2 + 20))
         elif game_state == 6:
             settings_buttons = draw_settings_screen()
         elif game_state == 7:
@@ -1906,5 +1142,4 @@ def game():
         clock.tick(fps)
 
 
-if __name__ == "__main__":
-    game()
+game()
