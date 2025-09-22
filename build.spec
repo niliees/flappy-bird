@@ -1,3 +1,4 @@
+# build.spec
 # -*- mode: python ; coding: utf-8 -*-
 
 block_cipher = None
@@ -13,6 +14,7 @@ added_files = [
     ('sounds/score.wav', 'sounds'),
     ('sounds/slap.wav', 'sounds'),
     ('sounds/woosh.wav', 'sounds'),
+    ('sounds/select.wav', 'sounds'),
 ]
 
 a = Analysis(
@@ -20,7 +22,21 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=added_files,
-    hiddenimports=['pygame._view', 'tkinter', 'requests'],
+    hiddenimports=[
+        'pygame._view',
+        'tkinter',
+        'tkinter.simpledialog',
+        'tkinter.messagebox',
+        'requests',
+        'threading',
+        'webbrowser',
+        'uuid',
+        'numpy',
+        'math',
+        'json',
+        'io',
+        'time'
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -39,7 +55,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='Flappy-Bird',
+    name='Flappy-Bird-NSCE',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -49,6 +65,5 @@ exe = EXE(
     console=False,
     icon='images/icon.ico',
     disable_windowed_traceback=False,
-    # Füge diese Version-Informationen hinzu
-    version='version_info.txt'
+    # version='version_info.txt'  # Auskommentiert falls Probleme
 )
